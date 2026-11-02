@@ -115,6 +115,17 @@ Nach jeder Phase: Build und Unit-Tests unter Linux grün, Commit, Push. Der Abgl
 ### Phase 2 – Decoder
 - `parseTransaction` aus `omnicore.cpp`: Class A/B/C, Sender, Referenz, Class-B-Entschleierung, Payload,
   dazu `interpret_Transaction` aus `tx.cpp` (OmniLite speichert Txs mit kaputtem Payload gar nicht).
+- **Stand:** umgesetzt. `GetEncodingClass` und `parseTransaction` stammen wörtlich aus OmniLite
+  (`src/omnicore/omnicore.cpp`), ebenso `parsing`, `script`, `encoding`, `createpayload`, `rules`
+  (bis `IsAllowedOutputType`) und der Strukturteil von `tx.cpp`; Herkunft und Änderungen in
+  `src/omnicore/ORIGIN.md`. Statt Cores Coins-View liefert eine `InputSource` die ausgegebenen Outputs,
+  im Betrieb per `getrawtransaction`. Der Indexer liest jeden Block mit `getblock` (Verbosity 2), dekodiert
+  die Txs im Format von Litecoin 0.18 (Txs mit MWEB-Daten werden mit Warnung übersprungen) und speichert wie
+  `mastercore_handler_tx` nur Txs, die `parseTransaction` mit 0 abschließen und `interpret_Transaction`
+  bestehen. DEx-Zahlungen kommen erst mit Phase 4 in die Liste, wenn sie Token kaufen. Getestet mit den
+  Decoder-Tests von OmniLite (auf Litecoin-Adressen umgerechnet, siehe `ORIGIN.md`) und eigenen
+  Indexer-Tests; der Abgleich mit `omni_listblocktransactions` eines Referenz-Nodes steht aus. Die
+  Datenbank aus Phase 1 muss gelöscht werden.
 
 ### Phase 3 – Basis-State
 - Simple Send, Send All, Issuance, Grant/Revoke, Change Issuer, Any Data, Activations, Alerts.
@@ -168,6 +179,11 @@ Nach jeder Phase: Build und Unit-Tests unter Linux grün, Commit, Push. Der Abgl
 Diese Punkte wurden beim Lesen des Quellcodes gefunden und müssen genau so nachgebaut werden. Bestätigt
 gegen einen echten Node ist noch keiner.
 
+- `GetEncodingClass` erkennt den Exodus-Output nur, wenn er P2PKH ist. Die Exodus-Adressen von Testnet
+  und Regtest sind P2SH (`Q…`); dort gibt es also keine Class-A/B-Transaktionen und keine DEx-Zahlungen,
+  nur Class C. (Neu in der C++-Fassung gefunden; die Go-Fassung hatte das nicht.)
+- Die Decoder-Tests im OmniLite-Repository erwarten noch Omni-Core-Adressen (Bitcoin) und laufen gegen
+  OmniLite selbst nicht. Sie sind hier auf Litecoin umgerechnet.
 - `HashToAddress` kennt nur die Versionsbytes 48 (`L`) und 5, nicht 50 (`M`). Ein Freeze an eine
   `M…`-Adresse mit Versionsbyte 50 ist strukturell ungültig; beim Senden schreiben wir deshalb 5.
 - `getIssuer` vergleicht nur Blockhöhen: Ein Issuer-Wechsel später im selben Block zählt schon.

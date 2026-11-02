@@ -24,7 +24,8 @@ namespace {
 
 // Changes whenever the stored data changes meaning: older databases must be rebuilt.
 // 1: blocks only (phase 1).
-const std::string SCHEMA_VERSION = "1";
+// 2: Omni transaction records (phase 2).
+const std::string SCHEMA_VERSION = "2";
 
 std::string HeightKey(char prefix, int64_t height)
 {

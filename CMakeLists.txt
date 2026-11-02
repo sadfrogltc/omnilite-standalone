@@ -61,6 +61,7 @@ add_library(litecoin_core STATIC
   ${VENDOR}/support/cleanse.cpp
   ${VENDOR}/uint256.cpp
   ${VENDOR}/util/strencodings.cpp
+  ${VENDOR}/policy/feerate.cpp
   src/chainparams.cpp)
 # src/ comes first: its chainparams.h replaces Litecoin Core's.
 target_include_directories(litecoin_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -75,7 +76,16 @@ target_compile_options(litecoin_core PRIVATE -w)
 # --- OmniLite Standalone ---
 add_library(omnilite STATIC
   src/config.cpp
+  src/indexer.cpp
   src/logging.cpp
+  src/omnicore/createpayload.cpp
+  src/omnicore/encoding.cpp
+  src/omnicore/omnicore.cpp
+  src/omnicore/parsing.cpp
+  src/omnicore/rules.cpp
+  src/omnicore/script.cpp
+  src/omnicore/tx.cpp
+  src/omnicore/utilsbitcoin.cpp
   src/rpcclient.cpp
   src/store.cpp
   src/syncer.cpp)
@@ -94,9 +104,23 @@ add_executable(test_omnilite
   test/main.cpp
   test/config_tests.cpp
   test/core_tests.cpp
+  test/indexer_tests.cpp
   test/rpcclient_tests.cpp
   test/store_tests.cpp
-  test/syncer_tests.cpp)
+  test/syncer_tests.cpp
+  test/omnicore/exodus_tests.cpp
+  test/omnicore/marker_tests.cpp
+  test/omnicore/obfuscation_tests.cpp
+  test/omnicore/output_restriction_tests.cpp
+  test/omnicore/parsing_a_tests.cpp
+  test/omnicore/parsing_b_tests.cpp
+  test/omnicore/parsing_c_tests.cpp
+  test/omnicore/script_extraction_tests.cpp
+  test/omnicore/script_solver_tests.cpp
+  test/omnicore/sender_bycontribution_tests.cpp
+  test/omnicore/sender_firstin_tests.cpp
+  test/omnicore/test_shim.cpp
+  test/omnicore/utils_tx.cpp)
 target_link_libraries(test_omnilite PRIVATE omnilite Boost::unit_test_framework PkgConfig::EVENT_PTHREADS)
 target_include_directories(test_omnilite PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(test_omnilite PRIVATE -Wall -Wextra)

@@ -4,6 +4,7 @@
 
 #include <chainparams.h>
 #include <config.h>
+#include <indexer.h>
 #include <logging.h>
 #include <pubkey.h>
 #include <rpcclient.h>
@@ -115,7 +116,7 @@ int Run(const Config& cfg)
 
         CStore store(cfg.DBPath(), Params().NetworkIDString(), cfg.undoDepth);
         RPCChainSource source(node);
-        NopProcessor processor;
+        Indexer processor(node);
         Syncer syncer(source, store, processor, Params().OmniGenesisBlock(), std::chrono::seconds(cfg.pollInterval));
         LogInfo("syncing: network %s, node %s, database %s, start %d", Params().NetworkIDString(), cfg.RPCURL(),
             cfg.DBPath(), Params().OmniGenesisBlock());

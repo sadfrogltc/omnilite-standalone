@@ -14,7 +14,10 @@ denen unter `src/` im Original. Lizenz: MIT, siehe `core/COPYING`, `core/univalu
   `crypto/ripemd160`
 - Transaktionen, Script, Adressen: `primitives/transaction`, `script/script`, `script/standard`,
   `script/interpreter.h`, `script/script_error.h`, `pubkey`, `base58`, `bech32`, `key_io`
+- Gebühren: `policy/feerate` (für die Dust-Grenze)
 - Bibliotheken: `univalue/` (include, lib), `secp256k1/` (include, src)
+
+Die Omni-Teile aus OmniLite liegen in `src/omnicore`; ihre Herkunft steht in `src/omnicore/ORIGIN.md`.
 
 `chainparams.h` kommt nicht aus Core: `src/chainparams.h` ersetzt es mit den Werten aus
 `src/chainparams.cpp` des Originals.
