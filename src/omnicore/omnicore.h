@@ -1,33 +1,46 @@
-// Copyright (c) 2026 The OmniLite Standalone developers
-// Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+#ifndef BITCOIN_OMNICORE_OMNICORE_H
+#define BITCOIN_OMNICORE_OMNICORE_H
 
-#ifndef OMNILITE_STANDALONE_OMNICORE_OMNICORE_H
-#define OMNILITE_STANDALONE_OMNICORE_OMNICORE_H
-
-// Excerpt of OmniLite's omnicore/omnicore.h (0.18.1): the constants and
-// declarations the ported files use. The in-memory state of the original
-// (tally map, locks, wallet totals) is not here; the state follows in phase 3.
+class CBlockIndex;
+class CCoinsView;
+class CCoinsViewCache;
+class CTransaction;
+class Coin;
 
 #include <omnicore/log.h>
+#include <omnicore/tally.h>
 
 #include <script/standard.h>
+#include <sync.h>
 #include <uint256.h>
+#include <util/system.h>
+
+#include <univalue.h>
 
 #include <stdint.h>
 
-#include <memory>
+#include <map>
 #include <string>
 #include <vector>
+#include <set>
+#include <unordered_map>
 
-class CBlockIndex;
-class CMPTransaction;
-class CTransaction;
-class CTxOut;
-class COutPoint;
+// Keep the state of the last 200 blocks to roll back quickly
+// in case of a block reorganization
+int const MAX_STATE_HISTORY = 200;
+// Also store the state every 5000 blocks to be able to recover
+// from a crash or shutdown during reparse more quickly
+int const STORE_EVERY_N_BLOCK = 5000;
+// Don't store the state every block on mainnet until block 2000000
+// was reached
+int const DONT_STORE_MAINNET_STATE_UNTIL = 2000000;
 
 #define TEST_ECO_PROPERTY_1 (0x80000003UL)
 
+// increment this value to force a refresh of the state (similar to --startclean)
+#define DB_VERSION 9
+
+// could probably also use: int64_t maxInt64 = std::numeric_limits<int64_t>::max();
 // maximum numeric values from the spec:
 #define MAX_INT_8_BYTES (9223372036854775807UL)
 
@@ -37,6 +50,7 @@ class COutPoint;
 // Omni Layer Transaction (Packet) Version
 #define MP_TX_PKT_V0  0
 #define MP_TX_PKT_V1  1
+
 
 // Transaction types, from the spec
 enum TransactionType {
@@ -111,52 +125,102 @@ std::string FormatByType(int64_t amount, uint16_t propertyType);
 std::string FormatMP(uint32_t propertyId, int64_t amount, bool fSign = false);
 std::string FormatShortMP(uint32_t propertyId, int64_t amount);
 
-/** omnilite-standalone: replaces ScriptToAsmStr of core_io.h in debug log lines: the script as hex. */
-std::string ScriptToAsmStr(const CScript& script, bool fAttemptSighashDecode = false);
-
 /** Returns the Exodus address. */
 const CTxDestination ExodusAddress();
 
 /** Returns the marker for class C transactions. */
 const std::vector<unsigned char> GetOmMarker();
 
-/**
- * omnilite-standalone: replaces Core's coins view. parseTransaction asks
- * this for the outputs the transaction's inputs spend.
- */
-class InputSource
-{
-public:
-    virtual ~InputSource() = default;
-    /** Fills out with the spent output; false if it cannot be found. */
-    virtual bool GetPrevout(const COutPoint& prevout, CTxOut& out) = 0;
-};
+//! Used to indicate, whether to automatically commit created transactions
+extern bool autoCommit;
 
-/**
- * omnilite-standalone: parseTransaction of omnicore.cpp in read-only mode
- * (ParseTransaction), with the inputs taken from inputs.
- *
- * @return 0 for an Omni transaction, 1 for a Class A transaction without
- *         data (a possible DEx payment), < 0 if not an Omni transaction
- */
-int ParseTransaction(const CTransaction& tx, int nBlock, unsigned int idx, CMPTransaction& mptx, InputSource& inputs, unsigned int nTime = 0);
+//! Global lock for state objects
+extern CCriticalSection cs_tally;
+
+//! Available balances of wallet properties
+extern std::map<uint32_t, int64_t> global_balance_money;
+//! Reserved balances of wallet propertiess
+extern std::map<uint32_t, int64_t> global_balance_reserved;
+//! Vector containing a list of properties relative to the wallet
+extern std::set<uint32_t> global_wallet_property_list;
+
+int64_t GetTokenBalance(const std::string& address, uint32_t propertyId, TallyType ttype);
+int64_t GetAvailableTokenBalance(const std::string& address, uint32_t propertyId);
+int64_t GetReservedTokenBalance(const std::string& address, uint32_t propertyId);
+int64_t GetFrozenTokenBalance(const std::string& address, uint32_t propertyId);
+
+/** Global handler to initialize Omni Core. */
+int mastercore_init();
+
+/** Global handler to shut down Omni Core. */
+int mastercore_shutdown();
+
+/** Block and transaction handlers. */
+void mastercore_handler_disc_begin(const int nHeight);
+int mastercore_handler_block_begin(int nBlockNow, CBlockIndex const * pBlockIndex);
+int mastercore_handler_block_end(int nBlockNow, CBlockIndex const * pBlockIndex, unsigned int);
+bool mastercore_handler_tx(const CTransaction& tx, int nBlock, unsigned int idx, const CBlockIndex* pBlockIndex, const std::shared_ptr<std::map<COutPoint, Coin>> removedCoins);
+
+/** Scans for marker and if one is found, add transaction to marker cache. */
+void TryToAddToMarkerCache(const CTransactionRef& tx);
+/** Removes transaction from marker cache. */
+void RemoveFromMarkerCache(const uint256& txHash);
+/** Checks, if transaction is in marker cache. */
+bool IsInMarkerCache(const uint256& txHash);
+
+/** Global handler to total wallet balances. */
+void CheckWalletUpdate(bool forceUpdate = false);
 
 namespace mastercore
 {
+//! In-memory collection of all amounts for all addresses for all properties
+extern std::unordered_map<std::string, CMPTally> mp_tally_map;
+
+// TODO: move, rename
+extern CCoinsView viewDummy;
+extern CCoinsViewCache view;
+//! Guards coins view cache
+extern CCriticalSection cs_tx_cache;
+
 /** Returns the encoding class, used to embed a payload. */
 int GetEncodingClass(const CTransaction& tx, int nBlock);
 
+/** Determines, whether it is valid to use a Class C transaction for a given payload size. */
+bool UseEncodingClassC(size_t nDataSize);
+
 bool isTestEcosystemProperty(uint32_t propertyId);
 bool isMainEcosystemProperty(uint32_t propertyId);
+uint32_t GetNextPropertyId(bool maineco); // maybe move into sp
 
-std::string strTransactionType(uint16_t txType);
+CMPTally* getTally(const std::string& address);
+bool update_tally_map(const std::string& who, uint32_t propertyId, int64_t amount, TallyType ttype);
+int64_t getTotalTokens(uint32_t propertyId, int64_t* n_owners_total = nullptr);
+
 std::string strMPProperty(uint32_t propertyId);
+std::string strTransactionType(uint16_t txType);
+std::string getTokenLabel(uint32_t propertyId);
 
-// From sp.h:
-std::string strPropertyType(uint16_t propertyType);
-std::string strEcosystem(uint8_t ecosystem);
-/** omnilite-standalone: until the state follows in phase 3, every property counts as divisible. */
-bool isPropertyDivisible(uint32_t propertyId);
+/**
+    NOTE: The following functions are only permitted for properties
+          managed by a central issuer that have enabled freezing.
+ **/
+/** Adds an address and property to the frozenMap **/
+void freezeAddress(const std::string& address, uint32_t propertyId);
+/** Removes an address and property from the frozenMap **/
+void unfreezeAddress(const std::string& address, uint32_t propertyId);
+/** Checks whether an address and property are frozen **/
+bool isAddressFrozen(const std::string& address, uint32_t propertyId);
+/** Adds a property to the freezingEnabledMap **/
+void enableFreezing(uint32_t propertyId, int liveBlock);
+/** Removes a property from the freezingEnabledMap **/
+void disableFreezing(uint32_t propertyId);
+/** Checks whether a property has freezing enabled **/
+bool isFreezingEnabled(uint32_t propertyId, int block);
+/** Clears the freeze state in the event of a reorg **/
+void ClearFreezeState();
+/** Prints the freeze state **/
+void PrintFreezeState();
+
 }
 
-#endif // OMNILITE_STANDALONE_OMNICORE_OMNICORE_H
+#endif // BITCOIN_OMNICORE_OMNICORE_H

@@ -1,0 +1,22 @@
+# coreshim
+
+Stellvertreter für Header von Litecoin Core, die die Dateien in `src/omnicore` einbinden, deren
+Original aber einen vollen Node voraussetzt. Jeder Header bildet nur das nach, was OmniLite davon
+benutzt; die Umsetzung steht in `coreshim.cpp` und `policy.cpp`.
+
+| Header | Inhalt |
+|---|---|
+| `chain.h` | `CBlockIndex` (Hash, Höhe, Zeit, Vorgänger) und `CChain` |
+| `validation.h` | `cs_main`, `chainActive`, `mapBlockIndex`, `ReadBlockFromDisk`, `GetTransaction`, `DoAbortNode`, `DoWarning` |
+| `coins.h` | `Coin` und der Teil von `CCoinsViewCache`, den OmniLite als Input-Cache nutzt |
+| `primitives/block.h` | `CBlock` mit seinen Transaktionen |
+| `policy/policy.h` | `GetDustThreshold`, `IsDust`, `minRelayTxFee` (Code aus Cores `policy.cpp`) |
+| `util/system.h` | `gArgs` für die `-omni*`-Argumente, `GetDataDir`, `TryCreateDirectories`, `LogPrintf` |
+| `util/time.h`, `sync.h`, `fs.h` | Zeit, Locks (`std::recursive_mutex`), `std::filesystem` |
+| `ui_interface.h`, `txmempool.h`, `interfaces/wallet.h` | ohne Wirkung: keine GUI, keine eigene Wallet |
+| `clientversion.h`, `chainparamsbase.h`, `shutdown.h`, `init.h`, `core_io.h` | Konstanten und Kleinigkeiten |
+
+Die Kette füllt der Indexer (`src/indexer.cpp`) aus den verarbeiteten Blöcken. `ReadBlockFromDisk`
+und `GetTransaction` fragen die Node per RPC; schlägt das mitten in einem Block fehl, bricht das
+Programm ab, statt OmniLite eine fehlende Transaktion als „nicht vorhanden“ zu melden. Beim
+Neustart lädt OmniLite dann seinen letzten gesicherten State.

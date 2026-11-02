@@ -130,6 +130,7 @@ void Syncer::Connect(const BlockHeader& header)
 void Syncer::Disconnect()
 {
     BlockInfo b = m_store.Disconnect();
+    m_processor.DisconnectBlock(b);
     LogWarn("block disconnected (reorg): height %d, hash %s", b.height, b.hash);
 }
 

@@ -2,7 +2,7 @@
 
 #include <script/script.h>
 #include <test/omnicore/test_shim.h> // omnilite-standalone: instead of test/test_bitcoin.h
-// omnilite-standalone: not needed // #include <util/system.h>
+#include <util/system.h>
 
 #include <boost/test/unit_test.hpp>
 

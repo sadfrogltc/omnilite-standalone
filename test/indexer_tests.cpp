@@ -2,30 +2,52 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+// Runs blocks through OmniLite's handlers via the indexer, including a reorg
+// and restarts, on regtest.
+
 #include <indexer.h>
 
 #include <chainparams.h>
+#include <hash.h>
 #include <key_io.h>
+#include <omnicore/activation.h>
 #include <omnicore/createpayload.h>
+#include <omnicore/dex.h>
+#include <omnicore/notifications.h>
+#include <omnicore/pending.h>
+#include <omnicore/sp.h>
 #include <omnicore/encoding.h>
 #include <omnicore/omnicore.h>
-#include <omnicore/parsing.h>
 #include <omnicore/rules.h>
-#include <streams.h>
+#include <omnicore/tally.h>
+#include <store.h>
 #include <test/omnicore/test_shim.h>
 #include <test/util.h>
-#include <util/strencodings.h>
-#include <version.h>
 
 #include <boost/test/unit_test.hpp>
 
+/** Empties OmniLite's in-memory state, as a fresh process finds it (the memory part of clear_all_state). */
+void ClearMemoryState()
+{
+    mastercore::mp_tally_map.clear();
+    mastercore::my_offers.clear();
+    mastercore::my_accepts.clear();
+    mastercore::my_crowds.clear();
+    mastercore::my_pending.clear();
+    mastercore::ResetConsensusParams();
+    mastercore::ClearActivations();
+    mastercore::ClearAlerts();
+    mastercore::ClearFreezeState();
+    mastercore::view.Flush();
+}
+
 namespace {
 
-CScript ScriptFor(unsigned char b, bool p2sh = false)
+CScript ScriptFor(unsigned char b)
 {
     uint160 h;
     for (unsigned char& c : h) c = b;
-    return p2sh ? GetScriptForDestination(CScriptID(h)) : GetScriptForDestination(CKeyID(h));
+    return GetScriptForDestination(CKeyID(h));
 }
 
 std::string AddressOf(const CScript& script)
@@ -35,124 +57,201 @@ std::string AddressOf(const CScript& script)
     return EncodeDestination(dest);
 }
 
-/** A transaction spending one fresh output of value from script, with the given outputs. */
-CTransactionRef Spend(TestCoinsView& view, const CScript& from, int64_t value, const std::vector<CTxOut>& outs, int salt)
+std::string Hash(const std::string& name)
 {
-    CMutableTransaction prev;
-    prev.vin.resize(1);
-    prev.vin[0].prevout = COutPoint(uint256S(strprintf("%064x", 1000 + salt)), 0);
-    prev.vout.push_back(CTxOut(value, from));
-    CTransaction prevTx(prev);
-    view.AddCoin(COutPoint(prevTx.GetHash(), 0), Coin{prevTx.vout[0]}, true);
-
-    CMutableTransaction mtx;
-    mtx.vin.push_back(CTxIn(prevTx.GetHash(), 0));
-    mtx.vout = outs;
-    return MakeTransactionRef(std::move(mtx));
+    CHashWriter hw(SER_GETHASH, 0);
+    hw << name;
+    return hw.GetHash().GetHex();
 }
 
-std::vector<CTxOut> ClassC(const std::vector<unsigned char>& payload)
+/** A simulated node: blocks by hash and the transactions it knows. */
+class FakeNode : public NodeData
 {
-    std::vector<std::pair<CScript, int64_t>> outputs;
-    BOOST_REQUIRE(OmniCore_Encode_ClassC(payload, outputs));
-    std::vector<CTxOut> outs;
-    for (const auto& o : outputs) outs.push_back(CTxOut(o.second, o.first));
-    return outs;
-}
+public:
+    std::map<std::string, std::vector<CTransactionRef>> blocks;
+    std::map<uint256, CTransactionRef> txs;
+    bool unreachable = false;
+
+    std::vector<CTransactionRef> GetBlockTxs(const std::string& hash) override
+    {
+        if (unreachable) throw NodeError("connection refused");
+        auto it = blocks.find(hash);
+        if (it == blocks.end()) throw NodeError("unknown block " + hash);
+        return it->second;
+    }
+
+    bool GetTx(const uint256& txid, CTransactionRef& tx, uint256& blockHash) override
+    {
+        if (unreachable) throw NodeError("connection refused");
+        auto it = txs.find(txid);
+        if (it == txs.end()) return false;
+        tx = it->second;
+        blockHash = uint256();
+        return true;
+    }
+
+    /** An output of value to script, known to the node. */
+    COutPoint Fund(const CScript& script, int64_t value)
+    {
+        CMutableTransaction mtx;
+        mtx.vin.resize(1);
+        mtx.vin[0].prevout = COutPoint(uint256S(strprintf("%064x", ++m_salt)), 0);
+        mtx.vout.push_back(CTxOut(value, script));
+        CTransactionRef tx = MakeTransactionRef(std::move(mtx));
+        txs[tx->GetHash()] = tx;
+        return COutPoint(tx->GetHash(), 0);
+    }
+
+    /** A Class C Omni transaction from script, with an optional reference output. */
+    CTransactionRef OmniTx(const CScript& from, const std::vector<unsigned char>& payload, const CScript* to = nullptr)
+    {
+        CMutableTransaction mtx;
+        mtx.vin.push_back(CTxIn(Fund(from, 100000)));
+        std::vector<std::pair<CScript, int64_t>> outputs;
+        BOOST_REQUIRE(OmniCore_Encode_ClassC(payload, outputs));
+        for (const auto& o : outputs) mtx.vout.push_back(CTxOut(o.second, o.first));
+        if (to) mtx.vout.push_back(CTxOut(5460, *to));
+        return MakeTransactionRef(std::move(mtx));
+    }
+
+private:
+    int m_salt = 0;
+};
+
+struct Fixture : BasicTestingSetup {
+    TempDir dir;
+    FakeNode node;
+    std::unique_ptr<CStore> store;
+    std::unique_ptr<OmniIndexer> indexer;
+    const CScript alice = ScriptFor(0xa1), bob = ScriptFor(0xb2), carol = ScriptFor(0xc3);
+    int64_t start;
+
+    Fixture()
+    {
+        SelectParams(CBaseChainParams::REGTEST);
+        start = mastercore::ConsensusParams().GENESIS_BLOCK;
+        Open();
+    }
+    ~Fixture() { Close(); }
+
+    void Open()
+    {
+        store = std::make_unique<CStore>(dir.Sub("index"), "regtest", 100);
+        indexer = std::make_unique<OmniIndexer>(node, *store);
+        indexer->Start(dir.Sub("omnicore"), OmniOptions());
+    }
+
+    /** Ends the "process": OmniLite's in-memory state is gone afterwards. */
+    void Close()
+    {
+        indexer.reset();
+        store.reset();
+        ClearMemoryState();
+    }
+
+    BlockHeader Header(const std::string& name, int64_t height)
+    {
+        std::optional<BlockInfo> tip = store->Tip();
+        return {Hash(name), height, tip ? tip->hash : Hash("genesis"), 1700000000 + height * 600};
+    }
+
+    void Connect(const std::string& name, int64_t height, const std::vector<CTransactionRef>& txs)
+    {
+        BlockHeader h = Header(name, height);
+        node.blocks[h.hash] = txs;
+        for (const auto& tx : txs) node.txs[tx->GetHash()] = tx;
+        std::unique_ptr<CBlockTx> btx = store->Begin({h.height, h.hash, h.prevHash, h.time});
+        indexer->ConnectBlock(*btx, h);
+        btx->Commit();
+    }
+
+    void Disconnect()
+    {
+        BlockInfo b = store->Disconnect();
+        indexer->DisconnectBlock(b);
+    }
+
+    int64_t Balance(const CScript& who, uint32_t property)
+    {
+        return GetTokenBalance(AddressOf(who), property, BALANCE);
+    }
+};
 
 } // namespace
 
-BOOST_FIXTURE_TEST_SUITE(indexer_tests, BasicTestingSetup)
+BOOST_FIXTURE_TEST_SUITE(indexer_tests, Fixture)
 
-BOOST_AUTO_TEST_CASE(records_valid_omni_transactions)
+BOOST_AUTO_TEST_CASE(issue_send_reorg_restart)
 {
-    TempDir dir;
-    CStore store(dir.Sub("db"), "main", 100);
-    TestCoinsView view;
-    const int64_t height = mastercore::ConsensusParams().GENESIS_BLOCK + 10;
-    const CScript alice = ScriptFor(0xa1, true), bob = ScriptFor(0xb2);
+    // Block 1: alice issues 1000 divisible tokens (property 3).
+    std::vector<unsigned char> issue = CreatePayload_IssuanceFixed(1, MSC_PROPERTY_TYPE_DIVISIBLE, 0, "Games", "", "Coin", "", "", 1000 * COIN);
+    Connect("b1", start, {node.OmniTx(alice, issue)});
+    BOOST_CHECK_EQUAL(Balance(alice, 3), 1000 * COIN);
 
-    std::vector<CTransactionRef> txs;
-    // 0: a coinbase
-    CMutableTransaction coinbase;
-    coinbase.vin.resize(1);
-    coinbase.vout.push_back(CTxOut(1250000000, alice));
-    txs.push_back(MakeTransactionRef(std::move(coinbase)));
-    // 1: a plain payment
-    txs.push_back(Spend(view, alice, 100000, {CTxOut(90000, bob)}, 1));
-    // 2: a Class C simple send from alice to bob, change first
-    std::vector<CTxOut> send = ClassC(CreatePayload_SimpleSend(3, 500));
-    send.insert(send.begin(), CTxOut(40000, alice));
-    send.push_back(CTxOut(5460, bob));
-    txs.push_back(Spend(view, alice, 100000, send, 2));
-    // 3: a structurally invalid payload (type 2, restricted send, has no interpreter)
-    std::vector<unsigned char> restricted = CreatePayload_SimpleSend(3, 500);
-    restricted[3] = 2;
-    txs.push_back(Spend(view, alice, 100000, ClassC(restricted), 3));
-    // 4: Class A without data: a possible DEx payment, recorded only once it buys tokens
-    txs.push_back(Spend(view, bob, 100000, {CTxOut(5460, GetScriptForDestination(ExodusAddress())), CTxOut(50000, alice)}, 4));
+    // Block 2: 400 to bob.
+    Connect("b2", start + 1, {node.OmniTx(alice, CreatePayload_SimpleSend(3, 400 * COIN), &bob)});
+    BOOST_CHECK_EQUAL(Balance(alice, 3), 600 * COIN);
+    BOOST_CHECK_EQUAL(Balance(bob, 3), 400 * COIN);
 
-    std::unique_ptr<CBlockTx> btx = store.Begin({height, "b10", "", 1700000000});
-    ProcessBlockTxs(*btx, height, 1700000000, txs, view);
-    btx->Commit();
+    // Reorg: block 2 is replaced by one sending 100 to carol. OmniLite loads
+    // the state saved after block 1 and goes on from there.
+    Disconnect();
+    Connect("b2'", start + 1, {node.OmniTx(alice, CreatePayload_SimpleSend(3, 100 * COIN), &carol)});
+    BOOST_CHECK_EQUAL(Balance(alice, 3), 900 * COIN);
+    BOOST_CHECK_EQUAL(Balance(bob, 3), 0);
+    BOOST_CHECK_EQUAL(Balance(carol, 3), 100 * COIN);
 
-    BOOST_CHECK_EQUAL(CountOmniTxs(store), 1);
-    std::optional<OmniTxRecord> rec = GetOmniTx(store, txs[2]->GetHash().GetHex());
-    BOOST_REQUIRE(rec);
-    BOOST_CHECK_EQUAL(rec->block, height);
-    BOOST_CHECK_EQUAL(rec->index, 2U);
-    BOOST_CHECK_EQUAL(rec->encodingClass, OMNI_CLASS_C);
-    BOOST_CHECK_EQUAL(rec->sender, AddressOf(alice));
-    BOOST_CHECK_EQUAL(rec->reference, AddressOf(bob));
-    BOOST_CHECK_EQUAL(rec->fee, 100000 - 40000 - 5460);
-    BOOST_CHECK_EQUAL(rec->type, MSC_TYPE_SIMPLE_SEND);
-    BOOST_CHECK_EQUAL(rec->payload, HexStr(CreatePayload_SimpleSend(3, 500)));
-    std::string txid;
-    BOOST_CHECK(store.Get(NS_BLOCKTX, BlockTxKey(height, 2), txid));
-    BOOST_CHECK_EQUAL(txid, rec->txid);
-    for (int i : {0, 1, 3, 4}) BOOST_CHECK(!GetOmniTx(store, txs[i]->GetHash().GetHex()));
+    // A send of more than alice has is invalid and moves nothing.
+    Connect("b3", start + 2, {node.OmniTx(alice, CreatePayload_SimpleSend(3, 5000 * COIN), &bob)});
+    BOOST_CHECK_EQUAL(Balance(alice, 3), 900 * COIN);
+    BOOST_CHECK_EQUAL(Balance(bob, 3), 0);
 
-    // The next block adds to the count; a reorg takes it back.
-    std::unique_ptr<CBlockTx> next = store.Begin({height + 1, "b11", "b10", 1700000600});
-    std::vector<CTxOut> again = ClassC(CreatePayload_SimpleSend(3, 1));
-    again.push_back(CTxOut(5460, bob));
-    ProcessBlockTxs(*next, height + 1, 1700000600, {Spend(view, alice, 100000, again, 5)}, view);
-    next->Commit();
-    BOOST_CHECK_EQUAL(CountOmniTxs(store), 2);
-    store.Disconnect();
-    BOOST_CHECK_EQUAL(CountOmniTxs(store), 1);
-    BOOST_CHECK(store.Scan(NS_BLOCKTX, "").size() == 1);
+    // Restart: a fresh process loads the saved state of the tip.
+    Close();
+    BOOST_CHECK(mastercore::mp_tally_map.empty());
+    Open();
+    BOOST_CHECK_EQUAL(Balance(alice, 3), 900 * COIN);
+    BOOST_CHECK_EQUAL(Balance(carol, 3), 100 * COIN);
 }
 
-BOOST_AUTO_TEST_CASE(before_genesis_class_c_is_ignored)
+BOOST_AUTO_TEST_CASE(restart_replays_missing_blocks)
 {
-    TempDir dir;
-    CStore store(dir.Sub("db"), "main", 100);
-    TestCoinsView view;
-    const int64_t height = mastercore::ConsensusParams().GENESIS_BLOCK - 1;
-    std::vector<CTxOut> send = ClassC(CreatePayload_SimpleSend(3, 500));
-    send.push_back(CTxOut(5460, ScriptFor(0xb2)));
-    std::unique_ptr<CBlockTx> btx = store.Begin({height, "a", "", 0});
-    ProcessBlockTxs(*btx, height, 0, {Spend(view, ScriptFor(0xa1), 100000, send, 1)}, view);
-    btx->Commit();
-    BOOST_CHECK_EQUAL(CountOmniTxs(store), 0);
+    std::vector<unsigned char> issue = CreatePayload_IssuanceFixed(1, MSC_PROPERTY_TYPE_INDIVISIBLE, 0, "Games", "", "Coin", "", "", 50);
+    Connect("c1", start, {node.OmniTx(alice, issue)});
+    Connect("c2", start + 1, {node.OmniTx(alice, CreatePayload_SimpleSend(3, 20), &bob)});
+
+    // Lose the saved state of the tip: on restart OmniLite loads block 1's
+    // state and replays block 2, which it reads from the node.
+    Close();
+    for (const auto& f : fs::directory_iterator(dir.Sub("omnicore") + "/MP_persist")) {
+        if (f.path().filename().string().find(Hash("c2")) != std::string::npos) fs::remove(f.path());
+    }
+    Open();
+    BOOST_CHECK_EQUAL(Balance(alice, 3), 30);
+    BOOST_CHECK_EQUAL(Balance(bob, 3), 20);
 }
 
-BOOST_AUTO_TEST_CASE(decode_tx)
+BOOST_AUTO_TEST_CASE(node_failure_before_processing_is_retryable)
 {
-    CMutableTransaction mtx;
-    mtx.vin.push_back(CTxIn(uint256S("01"), 3));
-    mtx.vout.push_back(CTxOut(1234, ScriptFor(0x11)));
-    CTransaction tx(mtx);
-    CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
-    ss << tx;
-    std::string hex = HexStr(ss.begin(), ss.end());
-    BOOST_CHECK(DecodeTx(hex)->GetHash() == tx.GetHash());
-    BOOST_CHECK_THROW(DecodeTx("zz"), std::exception);
-    BOOST_CHECK_THROW(DecodeTx(hex + "00"), std::exception);
-    // An MWEB flag (0x08) is unknown to Litecoin Core 0.18.
-    std::string mweb = hex.substr(0, 8) + "0008" + hex.substr(8);
-    BOOST_CHECK_THROW(DecodeTx(mweb), std::exception);
+    std::vector<unsigned char> issue = CreatePayload_IssuanceFixed(1, MSC_PROPERTY_TYPE_INDIVISIBLE, 0, "Games", "", "Coin", "", "", 50);
+    Connect("e1", start, {node.OmniTx(alice, issue)});
+
+    // The node fails while the block and its inputs are fetched: nothing is
+    // applied yet, so the syncer may retry (NodeError, not FatalError).
+    CTransactionRef send = node.OmniTx(alice, CreatePayload_SimpleSend(3, 20), &bob);
+    BlockHeader h = Header("e2", start + 1);
+    node.blocks[h.hash] = {send};
+    node.unreachable = true;
+    {
+        std::unique_ptr<CBlockTx> btx = store->Begin({h.height, h.hash, h.prevHash, h.time});
+        BOOST_CHECK_THROW(indexer->ConnectBlock(*btx, h), NodeError);
+    }
+    BOOST_CHECK_EQUAL(Balance(bob, 3), 0);
+
+    // Retried once the node answers again.
+    node.unreachable = false;
+    Connect("e2", start + 1, {send});
+    BOOST_CHECK_EQUAL(Balance(bob, 3), 20);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -2,7 +2,7 @@
 
 #include <amount.h>
 #include <policy/feerate.h>
-// omnilite-standalone: see GetDustThreshold below // #include <policy/policy.h>
+#include <policy/policy.h>
 #include <script/script.h>
 #include <script/standard.h>
 #include <serialize.h>
@@ -12,46 +12,8 @@
 #include <utility>
 #include <vector>
 
-// omnilite-standalone: instead of policy/policy.h, a copy of GetDustThreshold
-// from Litecoin Core's policy/policy.cpp, and minRelayTxFee (validation.cpp)
-// with Litecoin's DEFAULT_MIN_RELAY_TX_FEE. The sender may set it to the
-// node's relay fee.
-static const int WITNESS_SCALE_FACTOR = 4;
-CFeeRate minRelayTxFee = CFeeRate(1000);
-
-CAmount GetDustThreshold(const CTxOut& txout, const CFeeRate& dustRelayFeeIn)
-{
-    // "Dust" is defined in terms of dustRelayFee,
-    // which has units satoshis-per-kilobyte.
-    // If you'd pay more in fees than the value of the output
-    // to spend something, then we consider it dust.
-    // A typical spendable non-segwit txout is 34 bytes big, and will
-    // need a CTxIn of at least 148 bytes to spend:
-    // so dust is a spendable txout less than
-    // 182*dustRelayFee/1000 (in satoshis).
-    // 546 satoshis at the default rate of 3000 sat/kB.
-    // A typical spendable segwit txout is 31 bytes big, and will
-    // need a CTxIn of at least 67 bytes to spend:
-    // so dust is a spendable txout less than
-    // 98*dustRelayFee/1000 (in satoshis).
-    // 294 satoshis at the default rate of 3000 sat/kB.
-    if (txout.scriptPubKey.IsUnspendable())
-        return 0;
-
-    size_t nSize = GetSerializeSize(txout);
-    int witnessversion = 0;
-    std::vector<unsigned char> witnessprogram;
-
-    if (txout.scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram)) {
-        // sum the sizes of the parts of a transaction input
-        // with 75% segwit discount applied to the script size.
-        nSize += (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
-    } else {
-        nSize += (32 + 4 + 1 + 107 + 4); // the 148 mentioned above
-    }
-
-    return dustRelayFeeIn.GetFee(nSize);
-}
+/** The minimum transaction relay fee. */
+extern CFeeRate minRelayTxFee;
 
 /**
  * Determines the minimum output amount to be spent by an output, based on the

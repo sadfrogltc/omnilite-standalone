@@ -5,108 +5,89 @@
 #ifndef OMNILITE_STANDALONE_INDEXER_H
 #define OMNILITE_STANDALONE_INDEXER_H
 
-// Turns blocks into Omni transaction records. It is the syncer's Processor:
-// everything it writes goes through the block's transaction, so reorgs undo it.
+// Feeds the blocks the syncer connects into OmniLite's handlers, in the
+// order Litecoin Core calls them (validation.cpp, ConnectTip and
+// DisconnectTip). OmniLite keeps the Omni state itself, in memory, in its
+// databases and in its state files, and handles reorgs on its own.
 
-#include <omnicore/omnicore.h>
+#include <fs.h>
 #include <primitives/transaction.h>
-#include <serialize.h>
 #include <syncer.h>
 #include <uint256.h>
 
+#include <list>
 #include <map>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 
+class CBlockIndex;
 class RPCClient;
-
-// State namespaces of the indexer.
-/** txid (hex) -> OmniTxRecord */
-extern const std::string NS_TX;
-/** BlockTxKey(height, index) -> txid, the processing order */
-extern const std::string NS_BLOCKTX;
-/** "total" -> number of recorded transactions */
-extern const std::string NS_COUNT;
-
-/** Key of a transaction in NS_BLOCKTX: height and position, zero-padded. */
-std::string BlockTxKey(int64_t height, unsigned int index);
-
-/** A decoded, structurally valid Omni transaction (what OmniLite records via recordTX). */
-struct OmniTxRecord {
-    std::string txid;
-    int64_t block = 0;
-    uint32_t index = 0;
-    int64_t time = 0;
-    int encodingClass = 0;
-    std::string sender;
-    std::string reference;
-    int64_t fee = 0;
-    uint16_t version = 0;
-    uint16_t type = 0;
-    /** The raw payload as hex, interpreted again where needed. */
-    std::string payload;
-
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream& s, Operation ser_action)
-    {
-        READWRITE(txid);
-        READWRITE(block);
-        READWRITE(index);
-        READWRITE(time);
-        READWRITE(encodingClass);
-        READWRITE(sender);
-        READWRITE(reference);
-        READWRITE(fee);
-        READWRITE(version);
-        READWRITE(type);
-        READWRITE(payload);
-    }
-};
-
-/** Reads a recorded transaction. */
-std::optional<OmniTxRecord> GetOmniTx(const KVReader& kv, const std::string& txid);
-
-/** Number of recorded transactions. */
-int64_t CountOmniTxs(const KVReader& kv);
 
 /** Decodes a transaction from hex as Litecoin Core 0.18 serializes it; throws on failure. */
 CTransactionRef DecodeTx(const std::string& hex);
 
-/** Looks up spent outputs with getrawtransaction (needs -txindex) and keeps the fetched transactions. */
-class RPCInputSource : public InputSource
+/** What the indexer needs from the node. Failures to reach it throw NodeError. */
+class NodeData
 {
 public:
-    explicit RPCInputSource(const RPCClient& node) : m_node(node) {}
-    bool GetPrevout(const COutPoint& prevout, CTxOut& out) override;
-    /** Transactions of the block being processed, found without asking the node. */
-    void SetBlockTxs(const std::map<uint256, CTransactionRef>* txs) { m_block = txs; }
-
-private:
-    const RPCClient& m_node;
-    const std::map<uint256, CTransactionRef>* m_block = nullptr;
-    std::map<uint256, CTransactionRef> m_cache;
+    virtual ~NodeData() = default;
+    /** The transactions of a block; nullptr for those Litecoin 0.18 cannot read (MWEB). */
+    virtual std::vector<CTransactionRef> GetBlockTxs(const std::string& hash) = 0;
+    /** A transaction and the block it is in; false if the node does not know it. */
+    virtual bool GetTx(const uint256& txid, CTransactionRef& tx, uint256& blockHash) = 0;
 };
 
-/**
- * Records the Omni transactions of one block, as mastercore_handler_tx does
- * for each transaction. txs may contain nullptr for unreadable transactions.
- */
-void ProcessBlockTxs(CBlockTx& tx, int64_t height, int64_t time, const std::vector<CTransactionRef>& txs, InputSource& inputs);
-
-/** Reads blocks with getblock (verbosity 2) and records their Omni transactions. */
-class Indexer : public Processor
+/** NodeData over RPC: getblock (verbosity 2) and getrawtransaction (needs -txindex). */
+class RPCNodeData : public NodeData
 {
 public:
-    explicit Indexer(const RPCClient& node);
-    void ConnectBlock(CBlockTx& tx, const BlockHeader& header) override;
+    explicit RPCNodeData(const RPCClient& node) : m_node(node) {}
+    std::vector<CTransactionRef> GetBlockTxs(const std::string& hash) override;
+    bool GetTx(const uint256& txid, CTransactionRef& tx, uint256& blockHash) override;
 
 private:
     const RPCClient& m_node;
-    RPCInputSource m_inputs;
+};
+
+/** The settings OmniLite reads as -omni* arguments. */
+struct OmniOptions {
+    std::vector<std::string> activationAllowSenders;
+    std::vector<std::string> alertAllowSenders;
+    /** -omnidebug categories. */
+    std::vector<std::string> debug;
+};
+
+class OmniIndexer : public Processor
+{
+public:
+    OmniIndexer(NodeData& node, CStore& store);
+    ~OmniIndexer() override;
+
+    /**
+     * Rebuilds the chain index from the store and starts OmniLite
+     * (mastercore_init), which loads its saved state from dataDir and catches
+     * up to the store's tip.
+     */
+    void Start(const fs::path& dataDir, const OmniOptions& options);
+
+    void ConnectBlock(CBlockTx& tx, const BlockHeader& header) override;
+    void DisconnectBlock(const BlockInfo& block) override;
+
+private:
+    CBlockIndex* AddIndex(int64_t height, const std::string& hash, int64_t time);
+    /** Fetches the inputs of the transactions with an Omni marker. */
+    void Prefetch(const std::vector<CTransactionRef>& txs, int64_t height);
+    bool GetTransaction(const uint256& txid, CTransactionRef& tx, uint256& blockHash);
+    bool ReadBlock(const CBlockIndex* pindex, std::vector<CTransactionRef>& txs);
+
+    NodeData& m_node;
+    CStore& m_store;
+    bool m_started = false;
+    std::list<CBlockIndex> m_index;
+    /** Transactions of the block being processed and inputs fetched for it. */
+    std::map<uint256, CTransactionRef> m_blockTxs;
+    std::map<uint256, std::pair<CTransactionRef, uint256>> m_prefetched;
 };
 
 #endif // OMNILITE_STANDALONE_INDEXER_H

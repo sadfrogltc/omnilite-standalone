@@ -20,6 +20,7 @@ namespace {
 const std::set<std::string> SETTINGS = {
     "network", "rpcconnect", "rpcport", "rpcuser", "rpcpassword", "rpccookiefile",
     "pollinterval", "undodepth",
+    "omniactivationallowsender", "omnialertallowsender", "omnidebug",
 };
 
 std::string Trim(const std::string& s)
@@ -41,6 +42,19 @@ std::string JoinPath(const std::string& a, const std::string& b)
 {
     if (a.empty() || a.back() == '/') return a + b;
     return a + "/" + b;
+}
+
+/** Splits a comma-separated list and drops empty entries. */
+std::vector<std::string> SplitList(const std::string& value)
+{
+    std::vector<std::string> out;
+    std::stringstream ss(value);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        item = Trim(item);
+        if (!item.empty()) out.push_back(item);
+    }
+    return out;
 }
 
 int ParseInt(const std::string& key, const std::string& value, int min)
@@ -88,6 +102,11 @@ std::string Config::RPCURL() const
 std::string Config::DBPath() const
 {
     return JoinPath(JoinPath(dataDir, Params().NetworkIDString()), "index");
+}
+
+std::string Config::OmniDataDir() const
+{
+    return JoinPath(JoinPath(dataDir, Params().NetworkIDString()), "omnicore");
 }
 
 std::pair<std::string, std::string> Config::Credentials() const
@@ -172,6 +191,9 @@ Config LoadConfig(const std::vector<std::string>& args)
     cfg.rpcCookieFile = values["rpccookiefile"];
     if (values.count("pollinterval")) cfg.pollInterval = ParseInt("pollinterval", values["pollinterval"], 1);
     if (values.count("undodepth")) cfg.undoDepth = ParseInt("undodepth", values["undodepth"], 10);
+    cfg.activationAllowSenders = SplitList(values["omniactivationallowsender"]);
+    cfg.alertAllowSenders = SplitList(values["omnialertallowsender"]);
+    cfg.omniDebug = SplitList(values["omnidebug"]);
     return cfg;
 }
 
@@ -192,6 +214,9 @@ std::string HelpMessage()
       << "  -rpccookiefile=<f>  litecoind cookie file (default: ~/.litecoin/[net/].cookie)\n"
       << "  -pollinterval=<s>   seconds between checks for new blocks (default: 5)\n"
       << "  -undodepth=<n>      blocks of undo data kept for reorgs (default: 100)\n"
+      << "  -omniactivationallowsender=<a,b>  regtest only: extra senders of feature activations\n"
+      << "  -omnialertallowsender=<a,b>       regtest only: extra senders of alerts\n"
+      << "  -omnidebug=<a,b>    OmniLite debug categories, e.g. parser,tally or all\n"
       << "\nEvery option except -check, -datadir and -conf can also be set in the config file.\n";
     return s.str();
 }

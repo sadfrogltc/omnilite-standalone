@@ -6,20 +6,20 @@
 
 #include <omnicore/rules.h>
 
-// omnilite-standalone: phase 3 // #include <omnicore/activation.h>
-// omnilite-standalone: phase 3 // #include <omnicore/consensushash.h>
-// omnilite-standalone: phase 3 // #include <omnicore/dbtxlist.h>
+#include <omnicore/activation.h>
+#include <omnicore/consensushash.h>
+#include <omnicore/dbtxlist.h>
 #include <omnicore/log.h>
 #include <omnicore/omnicore.h>
-// omnilite-standalone: phase 3 // #include <omnicore/notifications.h>
-// omnilite-standalone: phase 3 // #include <omnicore/utilsbitcoin.h>
-// omnilite-standalone: phase 3 // #include <omnicore/version.h>
+#include <omnicore/notifications.h>
+#include <omnicore/utilsbitcoin.h>
+#include <omnicore/version.h>
 
-#include <chainparams.h> // omnilite-standalone: our src/chainparams.h
-// omnilite-standalone: not needed // #include <validation.h>
+#include <chainparams.h>
+#include <validation.h>
 #include <script/standard.h>
 #include <uint256.h>
-// omnilite-standalone: not needed // #include <ui_interface.h>
+#include <ui_interface.h>
 
 #include <stdint.h>
 #include <limits>
@@ -313,7 +313,259 @@ bool IsAllowedOutputType(int whichType, int nBlock)
     return false;
 }
 
-// omnilite-standalone: activations, feature checks and checkpoints of the
-// original rules.cpp follow in phase 3.
+/**
+ * Activates a feature at a specific block height, authorization has already been validated.
+ *
+ * Note: Feature activations are consensus breaking.  It is not permitted to activate a feature within
+ *       the next 2048 blocks (roughly 2 weeks), nor is it permitted to activate a feature further out
+ *       than 12288 blocks (roughly 12 weeks) to ensure sufficient notice.
+ *       This does not apply for activation during initialization (where loadingActivations is set true).
+ */
+bool ActivateFeature(uint16_t featureId, int activationBlock, uint32_t minClientVersion, int transactionBlock)
+{
+    PrintToLog("Feature activation requested (ID %d to go active as of block: %d)\n", featureId, activationBlock);
+
+    const CConsensusParams& params = ConsensusParams();
+
+    // check activation block is allowed
+    if ((activationBlock < (transactionBlock + params.MIN_ACTIVATION_BLOCKS)) ||
+        (activationBlock > (transactionBlock + params.MAX_ACTIVATION_BLOCKS))) {
+            PrintToLog("Feature activation of ID %d refused due to notice checks\n", featureId);
+            return false;
+    }
+
+    // check whether the feature is already active
+    if (IsFeatureActivated(featureId, transactionBlock)) {
+        PrintToLog("Feature activation of ID %d refused as the feature is already live\n", featureId);
+        return false;
+    }
+
+    // check feature is recognized and activation is successful
+    std::string featureName = GetFeatureName(featureId);
+    bool supported = OMNICORE_VERSION >= minClientVersion;
+    switch (featureId) {
+        case FEATURE_STOV1:
+            MutableConsensusParams().MSC_STOV1_BLOCK = activationBlock;
+        break;
+        case FEATURE_FREEZENOTICE:
+            MutableConsensusParams().FREEZENOTICE_FEATURE_BLOCK = activationBlock;
+        break;
+        case FEATURE_FREEDEX:
+            MutableConsensusParams().FREEDEX_FEATURE_BLOCK = activationBlock;
+        break;
+        case FEATURE_NONFUNGIBLE:
+            MutableConsensusParams().MSC_NONFUNGIBLE_BLOCK = activationBlock;
+        break;
+        case FEATURE_NONFUNGIBLE_ISSUER:
+            MutableConsensusParams().NONFUNGIBLETOKEN_ISSUER_DATA = activationBlock;
+        break;
+        default:
+            supported = false;
+        break;
+    }
+
+    PrintToLog("Feature activation of ID %d processed. %s will be enabled at block %d.\n", featureId, featureName, activationBlock);
+    AddPendingActivation(featureId, activationBlock, minClientVersion, featureName);
+
+    if (!supported) {
+        PrintToLog("WARNING!!! AS OF BLOCK %d THIS CLIENT WILL BE OUT OF CONSENSUS AND WILL AUTOMATICALLY SHUTDOWN.\n", activationBlock);
+        std::string alertText = strprintf("Your client must be updated and will shutdown at block %d (unsupported feature %d ('%s') activated)\n",
+                                          activationBlock, featureId, featureName);
+        AddAlert("omnicore", ALERT_BLOCK_EXPIRY, activationBlock, alertText);
+        DoWarning(alertText);
+    }
+
+    return true;
+}
+
+/**
+ * Deactivates a feature immediately, authorization has already been validated.
+ *
+ * Note: There is no notice period for feature deactivation as:
+ *       # It is reserved for emergency use in the event an exploit is found
+ *       # No client upgrade is required
+ *       # No action is required by users
+ */
+bool DeactivateFeature(uint16_t featureId, int transactionBlock)
+{
+    PrintToLog("Immediate feature deactivation requested (ID %d)\n", featureId);
+
+    if (!IsFeatureActivated(featureId, transactionBlock)) {
+        PrintToLog("Feature deactivation of ID %d refused as the feature is not yet live\n", featureId);
+        return false;
+    }
+
+    std::string featureName = GetFeatureName(featureId);
+    switch (featureId) {
+        case FEATURE_STOV1:
+            MutableConsensusParams().MSC_STOV1_BLOCK = 100000000;
+            break;
+        case FEATURE_FREEZENOTICE:
+            MutableConsensusParams().FREEZENOTICE_FEATURE_BLOCK = 100000000;
+        break;
+        case FEATURE_FREEDEX:
+            MutableConsensusParams().FREEDEX_FEATURE_BLOCK = 100000000;
+            break;
+        case FEATURE_NONFUNGIBLE:
+            MutableConsensusParams().MSC_NONFUNGIBLE_BLOCK = 100000000;
+        break;
+        case FEATURE_NONFUNGIBLE_ISSUER:
+            MutableConsensusParams().NONFUNGIBLETOKEN_ISSUER_DATA = 999999;
+        break;
+        default:
+            return false;
+        break;
+    }
+
+    PrintToLog("Feature deactivation of ID %d processed. %s has been disabled.\n", featureId, featureName);
+
+    std::string alertText = strprintf("An emergency deactivation of feature ID %d (%s) has occurred.", featureId, featureName);
+    AddAlert("omnicore", ALERT_BLOCK_EXPIRY, transactionBlock + 1024, alertText);
+    DoWarning(alertText);
+
+    return true;
+}
+
+/**
+ * Returns the display name of a feature ID
+ */
+std::string GetFeatureName(uint16_t featureId)
+{
+    switch (featureId) {
+        case FEATURE_STOV1: return "Cross-property Send To Owners";
+        case FEATURE_FREEZENOTICE: return "Activate the waiting period for enabling freezing";
+        case FEATURE_FREEDEX: return "Activate trading of any token on the distributed exchange";
+        case FEATURE_NONFUNGIBLE: return "Uniquely identifiable tokens";
+        case FEATURE_NONFUNGIBLE_ISSUER: return "NFT issuer data update by issuers only";
+
+        default: return "Unknown feature";
+    }
+}
+
+/**
+ * Checks, whether a feature is activated at the given block.
+ */
+bool IsFeatureActivated(uint16_t featureId, int transactionBlock)
+{
+    const CConsensusParams& params = ConsensusParams();
+    int activationBlock = std::numeric_limits<int>::max();
+
+    switch (featureId) {
+        case FEATURE_STOV1:
+            activationBlock = params.MSC_STOV1_BLOCK;
+            break;
+        case FEATURE_FREEZENOTICE:
+            activationBlock = params.FREEZENOTICE_FEATURE_BLOCK;
+            break;
+        case FEATURE_FREEDEX:
+            activationBlock = params.FREEDEX_FEATURE_BLOCK;
+        break;
+        case FEATURE_NONFUNGIBLE:
+            activationBlock = params.MSC_NONFUNGIBLE_BLOCK;
+        break;
+        case FEATURE_NONFUNGIBLE_ISSUER:
+            activationBlock = params.NONFUNGIBLETOKEN_ISSUER_DATA;
+            break;
+        default:
+            return false;
+    }
+
+    return (transactionBlock >= activationBlock);
+}
+
+/**
+ * Checks, if the transaction type and version is supported and enabled.
+ *
+ * In the test ecosystem, transactions, which are known to the client are allowed
+ * without height restriction.
+ *
+ * Certain transactions use a property identifier of 0 (= BTC) as wildcard, which
+ * must explicitly be allowed.
+ */
+bool IsTransactionTypeAllowed(int txBlock, uint32_t txProperty, uint16_t txType, uint16_t version)
+{
+    const std::vector<TransactionRestriction>& vTxRestrictions = ConsensusParams().GetRestrictions();
+
+    for (std::vector<TransactionRestriction>::const_iterator it = vTxRestrictions.begin(); it != vTxRestrictions.end(); ++it)
+    {
+        const TransactionRestriction& entry = *it;
+        if (entry.txType != txType || entry.txVersion != version) {
+            continue;
+        }
+        // a property identifier of 0 (= BTC) may be used as wildcard
+        if (OMNI_PROPERTY_BTC == txProperty && !entry.allowWildcard) {
+            continue;
+        }
+        // transactions are not restricted in the test ecosystem
+        if (isTestEcosystemProperty(txProperty)) {
+            return true;
+        }
+        if (txBlock >= entry.activationBlock) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Compares a supplied block, block hash and consensus hash against a hardcoded list of checkpoints.
+ */
+bool VerifyCheckpoint(int block, const uint256& blockHash)
+{
+    // optimization; we only checkpoint every 10,000 blocks - skip any further work if block not a multiple of 10K
+    if (block % 10000 != 0) return true;
+
+    const std::vector<ConsensusCheckpoint>& vCheckpoints = ConsensusParams().GetCheckpoints();
+
+    for (std::vector<ConsensusCheckpoint>::const_iterator it = vCheckpoints.begin(); it != vCheckpoints.end(); ++it) {
+        const ConsensusCheckpoint& checkpoint = *it;
+        if (block != checkpoint.blockHeight) {
+            continue;
+        }
+
+        if (blockHash != checkpoint.blockHash) {
+            PrintToLog("%s(): block hash mismatch - expected %s, received %s\n", __func__, checkpoint.blockHash.GetHex(), blockHash.GetHex());
+            return false;
+        }
+
+        // only verify if there is a checkpoint to verify against
+        uint256 consensusHash = GetConsensusHash();
+        if (consensusHash != checkpoint.consensusHash) {
+            PrintToLog("%s(): consensus hash mismatch - expected %s, received %s\n", __func__, checkpoint.consensusHash.GetHex(), consensusHash.GetHex());
+            return false;
+        } else {
+            break;
+        }
+    }
+
+    // either checkpoint matched or we don't have a checkpoint for this block
+    return true;
+}
+
+/**
+ * Checks, if a specific transaction exists in the database.
+ */
+bool VerifyTransactionExistence(int block)
+{
+    PrintToLog("%s: verifying existence of historical transactions up to block %d..\n", __func__, block);
+
+    const std::vector<TransactionCheckpoint>& vTransactionss = ConsensusParams().GetTransactions();
+
+    for (std::vector<TransactionCheckpoint>::const_iterator it = vTransactionss.begin(); it != vTransactionss.end(); ++it) {
+        const TransactionCheckpoint& checkpoint = *it;
+        if (block < checkpoint.blockHeight) {
+            continue;
+        }
+
+        if (!mastercore::pDbTransactionList->exists(checkpoint.txHash)) {
+            PrintToLog("%s: ERROR: failed to find historical transaction %s in block %d\n",
+                    __func__, checkpoint.txHash.GetHex(), checkpoint.blockHeight);
+            return false;
+        }
+    }
+
+    return true;
+}
 
 } // namespace mastercore

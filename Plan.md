@@ -45,15 +45,18 @@ Erkenntnisse über OmniLite stehen in Abschnitt 7.
   26.04 in WSL2, gcc 15).
 - **Übernommener Code** (`vendor/core`, MIT): die Bausteine aus Litecoin Core 0.18 im OmniLite-Repo
   (`uint256`, Serialisierung, Hashes, Script, Adressen, UniValue, libsecp256k1). Herkunft und alle
-  Änderungen stehen in `vendor/VENDOR.md`. Die Omni-Logik (`src/omnicore/*`) wird ab Phase 2
-  übernommen; wo sie auf Core zugreift (`cs_main`, `CCoinsViewCache`, `chainActive`, Wallet), ersetzt
-  eine dünne Schicht diese Stellen durch Daten aus dem RPC.
+  Änderungen stehen in `vendor/VENDOR.md`. Die Omni-Logik von OmniLite (`src/omnicore`) läuft fast
+  unverändert, samt ihrem eigenen State-Modell; wo sie auf Core zugreift (`cs_main`, `chainActive`,
+  `CCoinsViewCache`, `gArgs`, Blockdateien), liefern Stellvertreter in `src/coreshim` die Daten, per RPC
+  von der Node.
 - **Bibliotheken:** libevent (HTTP-Client zur Node und RPC-Server, wie Core), LevelDB (wie OmniLite),
   Boost (Header, Boost.Test).
-- **Datenquelle:** `getblock <hash> 2` liefert alle Txs dekodiert. Für die Sender-Bestimmung braucht es
-  die Prevouts der Inputs, also `getrawtransaction` mit `-txindex` am Node.
-- **Reorgs:** Jede State-Änderung eines Blocks bekommt einen Undo-Eintrag. Bei einem Reorg wird blockweise
-  bis zum gemeinsamen Vorfahren zurückgerollt; Undo-Daten älter als `undodepth` Blöcke werden gelöscht.
+- **Datenquelle:** `getblock <hash> 2` liefert alle Txs. Für die Sender-Bestimmung braucht es die Prevouts
+  der Inputs, also `getrawtransaction` mit `-txindex` am Node.
+- **State und Reorgs wie OmniLite (entschieden):** Der Omni-State liegt im Speicher und in OmniLites
+  LevelDB-Datenbanken; nach jedem Block sichert OmniLite ihn in Dateien (`MP_persist`, die letzten 200
+  Blöcke). Bei einem Reorg lädt OmniLite die passende Sicherung und rechnet die folgenden Blöcke neu.
+  Der eigene Store (`src/store`) führt nur die Blockliste und erkennt Reorgs.
 
 ---
 
@@ -127,11 +130,24 @@ Nach jeder Phase: Build und Unit-Tests unter Linux grün, Commit, Push. Der Abgl
   Indexer-Tests; der Abgleich mit `omni_listblocktransactions` eines Referenz-Nodes steht aus. Die
   Datenbank aus Phase 1 muss gelöscht werden.
 
-### Phase 3 – Basis-State
-- Simple Send, Send All, Issuance, Grant/Revoke, Change Issuer, Any Data, Activations, Alerts.
-
-### Phase 4 – Komplexe Logik
-- Crowdsales, STO, DEx (Offer, Accept, Zahlung, Ablauf), Freeze, NFTs, Consensus-Hash.
+### Phase 3 – Omni-State (zusammen mit der früheren Phase 4)
+- Alle Transaktionstypen (Send, Send All, Issuance, Grant/Revoke, Change Issuer, Any Data, Crowdsales,
+  STO, DEx, Freeze, NFTs, Activations, Alerts), Sicherung des States, Reorgs, Consensus-Hash.
+- In OmniLite hängen Logik, Sicherung und Reorg-Behandlung so eng zusammen, dass sie zusammen
+  übernommen werden; deshalb sind die früheren Phasen 3 und 4 eine.
+- **Stand:** umgesetzt. Der komplette Omni-Teil von OmniLite läuft (`src/omnicore`, siehe `ORIGIN.md`):
+  `mastercore_init`, die Block- und Transaktions-Handler, alle `logicMath_*`, die Datenbanken
+  (`MP_txlist`, `MP_spinfo`, `MP_stolist`, `Omni_TXDB`, `OMNI_nftdb`) und die State-Dateien
+  (`MP_persist`) unter `<datadir>/<netz>/omnicore`. Der Indexer ruft die Handler in der Reihenfolge von
+  Cores `ConnectTip`/`DisconnectTip` auf. Was einen Block braucht (Block, Inputs der Txs mit Marker),
+  holt er vorher; ein Node-Fehler dabei lässt den State unberührt und wird wiederholt. Ein Fehler mitten
+  im Block oder ein `DoAbortNode` von OmniLite (z. B. unbekanntes Feature aktiviert) beendet das
+  Programm; beim Neustart lädt OmniLite seine letzte Sicherung. Getestet: 145 Unit-Tests aus OmniLite
+  (Tally, DEx-Kauf, Crowdsale-Mathe, NFT-Datenbank, Activations, Alerts, Regeln, Payloads, Encoding,
+  128-Bit-Arithmetik u. a.; veraltete Erwartungen angepasst, siehe `ORIGIN.md`) und eigene Tests, die
+  Ausgabe, Sendung, Reorg mit Rücksprung auf die Sicherung, Neustart und Nachholen fehlender Blöcke
+  durch OmniLite laufen lassen. Ein Lauf gegen einen echten Node steht aus. Die Datenbank aus Phase 2
+  muss gelöscht werden.
 
 ### Phase 5 – API
 - JSON-RPC-Server (libevent) mit den `omni_*`-Aufrufen im Format von `omnilitecored`, lesende

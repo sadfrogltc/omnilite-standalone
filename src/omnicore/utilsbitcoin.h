@@ -1,23 +1,25 @@
-// Copyright (c) 2026 The OmniLite Standalone developers
-// Distributed under the MIT software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+#ifndef BITCOIN_OMNICORE_UTILSBITCOIN_H
+#define BITCOIN_OMNICORE_UTILSBITCOIN_H
 
-#ifndef OMNILITE_STANDALONE_OMNICORE_UTILSBITCOIN_H
-#define OMNILITE_STANDALONE_OMNICORE_UTILSBITCOIN_H
+class CBlockIndex;
+class uint256;
 
-// The network checks of OmniLite's omnicore/utilsbitcoin.h, on the
-// parameters selected with SelectParams.
+#include <stdint.h>
 
 namespace mastercore
 {
-/** Whether the selected network is mainnet. */
+/** Returns the current chain length. */
+int GetHeight();
+/** Returns the timestamp of the latest block. */
+uint32_t GetLatestBlockTime();
+/** Returns the CBlockIndex for a given block hash, or NULL. */
+CBlockIndex* GetBlockIndex(const uint256& hash);
+
 bool MainNet();
-/** Whether the selected network is testnet. */
 bool TestNet();
-/** Whether the selected network is regtest. */
 bool RegTest();
-/** Whether the selected network is not mainnet. */
+bool UnitTest();
 bool isNonMainNet();
 }
 
-#endif // OMNILITE_STANDALONE_OMNICORE_UTILSBITCOIN_H
+#endif // BITCOIN_OMNICORE_UTILSBITCOIN_H

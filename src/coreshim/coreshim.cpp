@@ -1,0 +1,162 @@
+// Copyright (c) 2026 The OmniLite Standalone developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
+// The state behind the Core stand-in headers.
+
+#if defined(NDEBUG)
+# error "OmniLite Standalone cannot be compiled without assertions: OmniLite relies on side effects inside assert()."
+#endif
+
+#include <chain.h>
+#include <core_io.h>
+#include <shutdown.h>
+#include <txmempool.h>
+#include <ui_interface.h>
+#include <util/system.h>
+#include <util/strencodings.h>
+#include <util/time.h>
+#include <validation.h>
+
+#include <atomic>
+#include <chrono>
+#include <ctime>
+
+// --- util/system.h ---
+
+ArgsManager gArgs;
+
+std::vector<std::string> ArgsManager::GetArgs(const std::string& arg) const
+{
+    auto it = m_args.find(arg);
+    return it == m_args.end() ? std::vector<std::string>() : it->second;
+}
+
+std::string ArgsManager::GetArg(const std::string& arg, const std::string& def) const
+{
+    auto it = m_args.find(arg);
+    return it == m_args.end() || it->second.empty() ? def : it->second.back();
+}
+
+int64_t ArgsManager::GetArg(const std::string& arg, int64_t def) const
+{
+    auto it = m_args.find(arg);
+    return it == m_args.end() || it->second.empty() ? def : atoi64(it->second.back());
+}
+
+bool ArgsManager::GetBoolArg(const std::string& arg, bool def) const
+{
+    auto it = m_args.find(arg);
+    if (it == m_args.end() || it->second.empty()) return def;
+    const std::string& v = it->second.back();
+    return v.empty() || atoi(v) != 0; // like Core's InterpretBool
+}
+
+namespace {
+fs::path g_dataDir = fs::current_path();
+} // namespace
+
+const fs::path& GetDataDir(bool)
+{
+    return g_dataDir;
+}
+
+void SetDataDir(const fs::path& path)
+{
+    g_dataDir = path;
+}
+
+bool TryCreateDirectories(const fs::path& p)
+{
+    return fs::create_directories(p);
+}
+
+// --- util/time.h ---
+
+int64_t GetTime()
+{
+    return std::time(nullptr);
+}
+
+int64_t GetTimeMillis()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+int64_t GetTimeMicros()
+{
+    return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+std::string FormatISO8601DateTime(int64_t nTime)
+{
+    std::time_t t = nTime;
+    std::tm ts;
+    gmtime_r(&t, &ts);
+    return strprintf("%04i-%02i-%02iT%02i:%02i:%02iZ", ts.tm_year + 1900, ts.tm_mon + 1, ts.tm_mday, ts.tm_hour, ts.tm_min, ts.tm_sec);
+}
+
+// --- chain.h, validation.h ---
+
+void CChain::SetTip(CBlockIndex* pindex)
+{
+    if (pindex == nullptr) {
+        vChain.clear();
+        return;
+    }
+    vChain.resize(pindex->nHeight + 1);
+    while (pindex && vChain[pindex->nHeight] != pindex) {
+        vChain[pindex->nHeight] = pindex;
+        pindex = pindex->pprev;
+    }
+}
+
+CCriticalSection cs_main;
+CChain chainActive;
+BlockMap mapBlockIndex;
+std::atomic_bool fReindex(false);
+
+std::function<bool(const CBlockIndex*, CBlock&)> g_readBlock;
+std::function<bool(const uint256&, CTransactionRef&, uint256&)> g_getTransaction;
+
+bool ReadBlockFromDisk(CBlock& block, const CBlockIndex* pindex, const Consensus::Params&)
+{
+    return g_readBlock && g_readBlock(pindex, block);
+}
+
+bool GetTransaction(const uint256& hash, CTransactionRef& tx, const Consensus::Params&, uint256& hashBlock, const CBlockIndex* const)
+{
+    return g_getTransaction && g_getTransaction(hash, tx, hashBlock);
+}
+
+// --- shutdown.h, ui_interface.h, txmempool.h, core_io.h ---
+
+namespace {
+std::atomic<bool> g_shutdown{false};
+std::atomic<bool> g_aborted{false};
+} // namespace
+
+void StartShutdown() { g_shutdown = true; }
+bool ShutdownRequested() { return g_shutdown; }
+
+void DoAbortNode(const std::string& strMessage, const std::string& userMessage)
+{
+    LogError("%s", userMessage.empty() ? strMessage : userMessage);
+    g_aborted = true;
+    StartShutdown();
+}
+
+void DoWarning(const std::string& strWarning)
+{
+    LogWarn("%s", strWarning);
+}
+
+bool NodeAborted() { return g_aborted; }
+
+CClientUIInterface uiInterface;
+CTxMemPool mempool;
+
+std::string ScriptToAsmStr(const CScript& script, const bool)
+{
+    return HexStr(script.begin(), script.end());
+}

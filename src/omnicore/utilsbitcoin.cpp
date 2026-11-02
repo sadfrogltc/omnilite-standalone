@@ -1,16 +1,55 @@
-// Ported from OmniLite 0.18.1, src/omnicore/utilsbitcoin.cpp (commit fbc27c1).
-// Copyright (c) the Omni Core and OmniLite developers; MIT license.
-//
-// omnilite-standalone: only the network checks. GetHeight and the block
-// index lookups of the original need a full node; the indexer passes the
-// block height explicitly.
+/**
+ * @file utilsbitcoin.cpp
+ *
+ * This file contains certain helpers to access information about Bitcoin.
+ */
 
-#include <omnicore/utilsbitcoin.h>
-
+#include <chain.h>
 #include <chainparams.h>
+#include <validation.h>
+#include <sync.h>
+
+#include <stdint.h>
+#include <string>
 
 namespace mastercore
 {
+/**
+ * @return The current chain length.
+ */
+int GetHeight()
+{
+    LOCK(cs_main);
+    return chainActive.Height();
+}
+
+/**
+ * @return The timestamp of the latest block.
+ */
+uint32_t GetLatestBlockTime()
+{
+    LOCK(cs_main);
+    if (chainActive.Tip())
+        return chainActive.Tip()->GetBlockTime();
+    else
+        return Params().GenesisBlock().nTime;
+}
+
+/**
+ * @return The CBlockIndex, or nullptr, if the block isn't available.
+ */
+CBlockIndex* GetBlockIndex(const uint256& hash)
+{
+    CBlockIndex* pBlockIndex = nullptr;
+    LOCK(cs_main);
+    BlockMap::const_iterator it = mapBlockIndex.find(hash);
+    if (it != mapBlockIndex.end()) {
+        pBlockIndex = it->second;
+    }
+
+    return pBlockIndex;
+}
+
 bool MainNet()
 {
     return Params().NetworkIDString() == "main";
@@ -26,11 +65,15 @@ bool RegTest()
     return Params().NetworkIDString() == "regtest";
 }
 
-// omnilite-standalone: the original also excludes the "unittest" network,
-// which does not exist here.
+bool UnitTest()
+{
+    return Params().NetworkIDString() == "unittest";
+}
+
 bool isNonMainNet()
 {
-    return !MainNet();
+    return !MainNet() && !UnitTest();
 }
+
 
 } // namespace mastercore

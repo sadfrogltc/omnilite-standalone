@@ -4,20 +4,6 @@
 
 #include <test/omnicore/test_shim.h>
 
-#include <omnicore/parsing.h>
-
-#include <random>
-
-namespace mastercore {
-TestCoinsView view;
-} // namespace mastercore
-
-/** OmniLite's ParseTransaction, which reads the global coins view. */
-int ParseTransaction(const CTransaction& tx, int nBlock, unsigned int idx, CMPTransaction& mptx, unsigned int nTime)
-{
-    return ParseTransaction(tx, nBlock, idx, mptx, mastercore::view, nTime);
-}
-
 std::mt19937& TestRng()
 {
     static std::mt19937 rng(std::random_device{}());

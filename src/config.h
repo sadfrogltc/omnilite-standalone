@@ -40,6 +40,12 @@ struct Config {
     /** Blocks of undo data kept for reorgs. */
     int undoDepth = 100;
 
+    // OmniLite's -omniactivationallowsender, -omnialertallowsender (they change
+    // the state; for regtest only) and -omnidebug.
+    std::vector<std::string> activationAllowSenders;
+    std::vector<std::string> alertAllowSenders;
+    std::vector<std::string> omniDebug;
+
     bool check = false;
     bool help = false;
 
@@ -47,6 +53,8 @@ struct Config {
     std::string RPCURL() const;
     /** Database directory of the selected network. */
     std::string DBPath() const;
+    /** Directory of OmniLite's own state files and databases. */
+    std::string OmniDataDir() const;
     /** RPC user and password, read from the cookie file when no password is set. */
     std::pair<std::string, std::string> Credentials() const;
 };

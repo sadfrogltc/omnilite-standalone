@@ -57,13 +57,16 @@ BOOST_AUTO_TEST_CASE(file_and_flags)
         "network = regtest\n"
         "rpcuser=omni   # trailing comment\n"
         "rpcpassword=secret\n"
-        "pollinterval=7\n");
+        "pollinterval=7\n"
+        "omnialertallowsender = a, b\n");
     Config cfg = LoadConfig({"-datadir=" + dir.path, "--pollinterval=2", "-check"});
     BOOST_CHECK_EQUAL(cfg.network, "regtest");
     BOOST_CHECK_EQUAL(Params().NetworkIDString(), "regtest");
     BOOST_CHECK_EQUAL(cfg.rpcPort, 19443);
     BOOST_CHECK_EQUAL(cfg.pollInterval, 2); // the flag wins
     BOOST_CHECK(cfg.check);
+    BOOST_CHECK(cfg.alertAllowSenders == std::vector<std::string>({"a", "b"}));
+    BOOST_CHECK(cfg.activationAllowSenders.empty());
     BOOST_CHECK(cfg.Credentials() == std::make_pair(std::string("omni"), std::string("secret")));
     SelectParams("main");
 }

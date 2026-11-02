@@ -26,6 +26,7 @@ public:
         bech32_hrp = "ltc";
         nOmniGenesisBlock = 2010500;
         strExodusAddress = "LTceXoduS2cetpWJSe47M25i5oKjEccN1h";
+        genesis.nTime = 1317972665;
     }
 };
 
@@ -47,6 +48,7 @@ public:
         bech32_hrp = "tltc";
         nOmniGenesisBlock = 101;
         strExodusAddress = "QeVAq4mudsSSvyM6mBkd7cUuPsgBBrLq83";
+        genesis.nTime = 1486949366;
     }
 };
 
@@ -68,6 +70,7 @@ public:
         bech32_hrp = "rltc";
         nOmniGenesisBlock = 101;
         strExodusAddress = "QMSH3Dp8raecReSw7hBbbCCfDpUGXQUz1m";
+        genesis.nTime = 1296688602;
     }
 };
 

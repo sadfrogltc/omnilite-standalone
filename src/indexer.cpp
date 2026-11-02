@@ -4,59 +4,24 @@
 
 #include <indexer.h>
 
+#include <chain.h>
+#include <chainparams.h>
 #include <logging.h>
+#include <omnicore/omnicore.h>
 #include <omnicore/parsing.h>
-#include <omnicore/tx.h>
 #include <rpcclient.h>
+#include <store.h>
 #include <streams.h>
 #include <util/strencodings.h>
+#include <util/system.h>
+#include <validation.h>
 #include <version.h>
 
-const std::string NS_TX = "tx";
-const std::string NS_BLOCKTX = "blocktx";
-const std::string NS_COUNT = "count";
-
-namespace {
-
-/** Fetched transactions kept for input lookups before the cache is cleared. */
-const size_t INPUT_CACHE_SIZE = 50000;
-
-template <typename T>
-std::string Serialize(const T& obj)
-{
-    CDataStream ss(SER_DISK, PROTOCOL_VERSION);
-    ss << obj;
-    return ss.str();
-}
-
-template <typename T>
-T Deserialize(const std::string& data)
-{
-    CDataStream ss(data.data(), data.data() + data.size(), SER_DISK, PROTOCOL_VERSION);
-    T obj;
-    ss >> obj;
-    return obj;
-}
-
-} // namespace
-
-std::string BlockTxKey(int64_t height, unsigned int index)
-{
-    return strprintf("%010d:%05d", height, index);
-}
-
-std::optional<OmniTxRecord> GetOmniTx(const KVReader& kv, const std::string& txid)
-{
-    std::string v;
-    if (!kv.Get(NS_TX, txid, v)) return std::nullopt;
-    return Deserialize<OmniTxRecord>(v);
-}
-
-int64_t CountOmniTxs(const KVReader& kv)
-{
-    std::string v;
-    return kv.Get(NS_COUNT, "total", v) ? std::stoll(v) : 0;
-}
+// OmniLite's handlers (omnicore.cpp), declared in Core's validation.cpp.
+int mastercore_handler_block_begin(int nBlockNow, CBlockIndex const* pBlockIndex);
+int mastercore_handler_block_end(int nBlockNow, CBlockIndex const* pBlockIndex, unsigned int);
+bool mastercore_handler_tx(const CTransaction& tx, int nBlock, unsigned int idx, CBlockIndex const* pBlockIndex, std::shared_ptr<std::map<COutPoint, Coin>> removedCoins);
+void mastercore_handler_disc_begin(const int nHeight);
 
 CTransactionRef DecodeTx(const std::string& hex)
 {
@@ -69,134 +34,214 @@ CTransactionRef DecodeTx(const std::string& hex)
     return MakeTransactionRef(std::move(mtx));
 }
 
-// --- RPCInputSource ---
+// --- RPCNodeData ---
 
-bool RPCInputSource::GetPrevout(const COutPoint& prevout, CTxOut& out)
-{
-    if (prevout.IsNull()) return false; // coinbase
-    CTransactionRef tx;
-    if (m_block) {
-        auto it = m_block->find(prevout.hash);
-        if (it != m_block->end()) tx = it->second;
-    }
-    if (!tx) {
-        auto it = m_cache.find(prevout.hash);
-        if (it != m_cache.end()) {
-            tx = it->second;
-        } else {
-            UniValue params(UniValue::VARR);
-            params.push_back(prevout.hash.GetHex());
-            params.push_back(false);
-            try {
-                tx = DecodeTx(m_node.Call("getrawtransaction", params).get_str());
-            } catch (const RPCError& e) {
-                if (e.code == RPC_INVALID_ADDRESS_OR_KEY) return false; // not found
-                throw NodeError("getrawtransaction " + prevout.hash.GetHex() + ": " + e.what());
-            } catch (const NodeUnreachable& e) {
-                throw NodeError(e.what());
-            }
-            if (m_cache.size() >= INPUT_CACHE_SIZE) m_cache.clear();
-            m_cache[prevout.hash] = tx;
-        }
-    }
-    if (prevout.n >= tx->vout.size()) return false;
-    out = tx->vout[prevout.n];
-    return true;
-}
-
-// --- Indexer ---
-
-Indexer::Indexer(const RPCClient& node) : m_node(node), m_inputs(node) {}
-
-void Indexer::ConnectBlock(CBlockTx& tx, const BlockHeader& header)
+std::vector<CTransactionRef> RPCNodeData::GetBlockTxs(const std::string& hash)
 {
     UniValue params(UniValue::VARR);
-    params.push_back(header.hash);
+    params.push_back(hash);
     params.push_back(2);
     UniValue block;
     try {
         block = m_node.Call("getblock", params);
     } catch (const RPCError& e) {
-        throw NodeError("getblock " + header.hash + ": " + e.what());
+        throw NodeError("getblock " + hash + ": " + e.what());
     } catch (const NodeUnreachable& e) {
         throw NodeError(e.what());
     }
-    if (find_value(block, "hash").get_str() != header.hash || find_value(block, "height").get_int64() != header.height) {
-        throw std::runtime_error("node returned another block for " + header.hash);
-    }
+    if (find_value(block, "hash").get_str() != hash) throw NodeError("node returned another block for " + hash);
 
     std::vector<CTransactionRef> txs;
-    std::map<uint256, CTransactionRef> byHash;
     const UniValue blockTxs = find_value(block, "tx");
     for (const UniValue& t : blockTxs.getValues()) {
         const std::string txid = find_value(t, "txid").get_str();
-        CTransactionRef ptx;
         try {
-            ptx = DecodeTx(find_value(t, "hex").get_str());
+            CTransactionRef ptx = DecodeTx(find_value(t, "hex").get_str());
+            if (ptx->GetHash().GetHex() != txid) throw std::runtime_error("decodes to " + ptx->GetHash().GetHex());
+            txs.push_back(ptx);
         } catch (const std::exception& e) {
             // Transactions with MWEB data (Litecoin 0.21) do not exist for
-            // OmniLite 0.18, so they cannot carry Omni transactions there.
-            LogWarn("block %d: transaction %s skipped, not readable as Litecoin 0.18 (%s)", header.height, txid, e.what());
+            // OmniLite 0.18; the position in the block still counts.
+            LogWarn("block %s: transaction %s skipped, not readable as Litecoin 0.18 (%s)", hash, txid, e.what());
             txs.push_back(nullptr);
-            continue;
         }
-        if (ptx->GetHash().GetHex() != txid) {
-            throw std::runtime_error("block " + std::to_string(header.height) + ": transaction " + txid + " decodes to " + ptx->GetHash().GetHex());
-        }
-        byHash[ptx->GetHash()] = ptx;
-        txs.push_back(ptx);
     }
-
-    m_inputs.SetBlockTxs(&byHash);
-    try {
-        ProcessBlockTxs(tx, header.height, header.time, txs, m_inputs);
-    } catch (...) {
-        m_inputs.SetBlockTxs(nullptr);
-        throw;
-    }
-    m_inputs.SetBlockTxs(nullptr);
+    return txs;
 }
 
-void ProcessBlockTxs(CBlockTx& tx, int64_t height, int64_t time, const std::vector<CTransactionRef>& txs, InputSource& inputs)
+bool RPCNodeData::GetTx(const uint256& txid, CTransactionRef& tx, uint256& blockHash)
 {
-    int64_t count = CountOmniTxs(tx);
-    int64_t found = 0;
-    for (unsigned int idx = 0; idx < txs.size(); ++idx) {
-        const CTransactionRef& ptx = txs[idx];
-        if (!ptx || ptx->IsCoinBase()) continue;
-
-        // As mastercore_handler_tx: parse, and record only structurally
-        // valid transactions. DEx payments (result 1) are recorded once they
-        // buy tokens, which needs the state (phase 4).
-        CMPTransaction mp;
-        int ret = ParseTransaction(*ptx, static_cast<int>(height), idx, mp, inputs, static_cast<unsigned int>(time));
-        if (ret != 0) {
-            if (ret < -1 && ret != -5) LogDebug("tx %s not parsed: %d", ptx->GetHash().GetHex(), ret);
-            continue;
-        }
-        if (!mp.interpret_Transaction()) {
-            LogDebug("tx %s: structurally invalid payload", ptx->GetHash().GetHex());
-            continue;
-        }
-
-        OmniTxRecord rec;
-        rec.txid = ptx->GetHash().GetHex();
-        rec.block = height;
-        rec.index = idx;
-        rec.time = time;
-        rec.encodingClass = mp.getEncodingClass();
-        rec.sender = mp.getSender();
-        rec.reference = mp.getReceiver();
-        rec.fee = static_cast<int64_t>(mp.getFeePaid());
-        rec.version = mp.getVersion();
-        rec.type = static_cast<uint16_t>(mp.getType());
-        rec.payload = mp.getPayload();
-        tx.Put(NS_TX, rec.txid, Serialize(rec));
-        tx.Put(NS_BLOCKTX, BlockTxKey(height, idx), rec.txid);
-        ++found;
+    UniValue params(UniValue::VARR);
+    params.push_back(txid.GetHex());
+    params.push_back(true);
+    UniValue r;
+    try {
+        r = m_node.Call("getrawtransaction", params);
+    } catch (const RPCError& e) {
+        if (e.code == RPC_INVALID_ADDRESS_OR_KEY) return false; // unknown transaction
+        throw NodeError("getrawtransaction " + txid.GetHex() + ": " + e.what());
+    } catch (const NodeUnreachable& e) {
+        throw NodeError(e.what());
     }
-    if (found > 0) {
-        tx.Put(NS_COUNT, "total", std::to_string(count + found));
-        LogInfo("block %d: %d Omni transaction(s)", height, found);
+    tx = DecodeTx(find_value(r, "hex").get_str());
+    const UniValue hash = find_value(r, "blockhash");
+    blockHash = hash.isStr() ? uint256S(hash.get_str()) : uint256();
+    return true;
+}
+
+// --- OmniIndexer ---
+
+OmniIndexer::OmniIndexer(NodeData& node, CStore& store) : m_node(node), m_store(store) {}
+
+OmniIndexer::~OmniIndexer()
+{
+    g_readBlock = nullptr;
+    g_getTransaction = nullptr;
+    if (m_started) mastercore_shutdown();
+    LOCK(cs_main);
+    chainActive.SetTip(nullptr);
+    mapBlockIndex.clear();
+}
+
+CBlockIndex* OmniIndexer::AddIndex(int64_t height, const std::string& hash, int64_t time)
+{
+    uint256 h = uint256S(hash);
+    auto it = mapBlockIndex.find(h);
+    if (it != mapBlockIndex.end()) return it->second; // seen before, e.g. a block that comes back after a reorg
+    m_index.emplace_back();
+    CBlockIndex* pindex = &m_index.back();
+    pindex->nHeight = static_cast<int>(height);
+    pindex->nTime = static_cast<uint32_t>(time);
+    pindex->pprev = chainActive.Tip();
+    it = mapBlockIndex.emplace(h, pindex).first;
+    pindex->phashBlock = &it->first;
+    return pindex;
+}
+
+void OmniIndexer::Start(const fs::path& dataDir, const OmniOptions& options)
+{
+    fs::create_directories(dataDir);
+    SetDataDir(dataDir);
+    gArgs.ClearArgs();
+    if (!options.activationAllowSenders.empty()) gArgs.ForceSetMultiArg("-omniactivationallowsender", options.activationAllowSenders);
+    if (!options.alertAllowSenders.empty()) gArgs.ForceSetMultiArg("-omnialertallowsender", options.alertAllowSenders);
+    if (!options.debug.empty()) gArgs.ForceSetMultiArg("-omnidebug", options.debug);
+
+    g_readBlock = [this](const CBlockIndex* pindex, CBlock& block) { return ReadBlock(pindex, block.vtx); };
+    g_getTransaction = [this](const uint256& txid, CTransactionRef& tx, uint256& blockHash) { return GetTransaction(txid, tx, blockHash); };
+
+    // The active chain is what the store holds: OmniLite's state belongs to it.
+    {
+        LOCK(cs_main);
+        std::optional<BlockInfo> tip = m_store.Tip();
+        if (tip) {
+            for (int64_t h = Params().OmniGenesisBlock(); h <= tip->height; ++h) {
+                std::optional<BlockInfo> b = m_store.BlockAt(h);
+                if (!b) continue; // the store may start later on test networks
+                chainActive.SetTip(AddIndex(b->height, b->hash, b->time));
+            }
+        }
     }
+
+    m_started = true;
+    try {
+        mastercore_init();
+    } catch (const NodeError& e) {
+        throw FatalError(std::string("loading the Omni state: ") + e.what());
+    }
+    if (NodeAborted()) throw FatalError("OmniLite stopped while loading its state, see the log");
+}
+
+bool OmniIndexer::ReadBlock(const CBlockIndex* pindex, std::vector<CTransactionRef>& txs)
+{
+    // OmniLite replays blocks after a reorg or at start-up; the node must
+    // answer, a missing block would leave the state incomplete.
+    txs = m_node.GetBlockTxs(pindex->GetBlockHash().GetHex());
+    m_blockTxs.clear();
+    m_prefetched.clear();
+    for (const CTransactionRef& tx : txs) {
+        if (tx) m_blockTxs[tx->GetHash()] = tx;
+    }
+    return true;
+}
+
+bool OmniIndexer::GetTransaction(const uint256& txid, CTransactionRef& tx, uint256& blockHash)
+{
+    auto it = m_blockTxs.find(txid);
+    if (it != m_blockTxs.end()) {
+        tx = it->second;
+        blockHash = uint256(); // the block being processed
+        return true;
+    }
+    auto pit = m_prefetched.find(txid);
+    if (pit != m_prefetched.end()) {
+        tx = pit->second.first;
+        blockHash = pit->second.second;
+        return tx != nullptr;
+    }
+    return m_node.GetTx(txid, tx, blockHash);
+}
+
+void OmniIndexer::Prefetch(const std::vector<CTransactionRef>& txs, int64_t height)
+{
+    for (const CTransactionRef& tx : txs) {
+        if (!tx || tx->IsCoinBase()) continue;
+        if (mastercore::GetEncodingClass(*tx, static_cast<int>(height)) == NO_MARKER) continue;
+        for (const CTxIn& in : tx->vin) {
+            const uint256& h = in.prevout.hash;
+            if (m_blockTxs.count(h) || m_prefetched.count(h)) continue;
+            CTransactionRef prev;
+            uint256 blockHash;
+            if (!m_node.GetTx(h, prev, blockHash)) prev = nullptr; // OmniLite then rejects the transaction (-101)
+            m_prefetched[h] = {prev, blockHash};
+        }
+    }
+}
+
+void OmniIndexer::ConnectBlock(CBlockTx&, const BlockHeader& header)
+{
+    // Everything that needs the node comes first: a failure here leaves the
+    // state untouched and the syncer retries.
+    std::vector<CTransactionRef> txs = m_node.GetBlockTxs(header.hash);
+    m_blockTxs.clear();
+    m_prefetched.clear();
+    for (const CTransactionRef& tx : txs) {
+        if (tx) m_blockTxs[tx->GetHash()] = tx;
+    }
+    Prefetch(txs, header.height);
+
+    LOCK(cs_main);
+    CBlockIndex* tip = chainActive.Tip();
+    if (tip && tip->GetBlockHash().GetHex() != header.prevHash) {
+        throw FatalError("block " + header.hash + " does not extend OmniLite's chain tip " + tip->GetBlockHash().GetHex());
+    }
+    CBlockIndex* pindex = AddIndex(header.height, header.hash, header.time);
+    pindex->pprev = tip;
+
+    // As ConnectTip: begin with the previous height, then the new tip, the
+    // transactions and the end of the block.
+    try {
+        unsigned int nNumMetaTxs = mastercore_handler_block_begin(chainActive.Height(), pindex);
+        chainActive.SetTip(pindex);
+        for (unsigned int idx = 0; idx < txs.size(); ++idx) {
+            if (txs[idx] && mastercore_handler_tx(*txs[idx], pindex->nHeight, idx, pindex, nullptr)) ++nNumMetaTxs;
+        }
+        mastercore_handler_block_end(pindex->nHeight, pindex, nNumMetaTxs);
+    } catch (const std::exception& e) {
+        throw FatalError("block " + std::to_string(header.height) + " failed half way, restart to reload the last saved state: " + e.what());
+    }
+    if (NodeAborted()) throw FatalError("OmniLite stopped at block " + std::to_string(header.height) + ", see the log");
+}
+
+void OmniIndexer::DisconnectBlock(const BlockInfo& block)
+{
+    // As DisconnectTip: the previous block becomes the tip, then OmniLite
+    // learns about it and rewinds its state when the next block comes.
+    LOCK(cs_main);
+    CBlockIndex* tip = chainActive.Tip();
+    if (!tip || tip->GetBlockHash().GetHex() != block.hash) {
+        throw FatalError("disconnected block " + block.hash + " is not OmniLite's chain tip");
+    }
+    chainActive.SetTip(tip->pprev);
+    mastercore_handler_disc_begin(block.height);
 }

@@ -6,11 +6,12 @@
 #include <boost/test/unit_test.hpp>
 
 #include <logging.h>
+#include <cstdlib>
 #include <pubkey.h>
 
-/** Sets up the secp256k1 context for all tests, as main() does, and keeps the log quiet. */
+/** Sets up the secp256k1 context for all tests, as main() does, and keeps the log quiet (OMNI_TEST_DEBUG=1 shows everything). */
 struct ECCSetup {
     ECCVerifyHandle handle;
-    ECCSetup() { SetLogLevel(LogLevel::Error); }
+    ECCSetup() { SetLogLevel(std::getenv("OMNI_TEST_DEBUG") ? LogLevel::Debug : LogLevel::Error); }
 };
 BOOST_GLOBAL_FIXTURE(ECCSetup);

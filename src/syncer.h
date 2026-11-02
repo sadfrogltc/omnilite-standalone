@@ -32,6 +32,13 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+/** Processing stopped in a state that cannot be continued; the program must restart. */
+class FatalError : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
+};
+
 /** The node calls the syncer needs. Implementations throw NodeError. */
 class ChainSource
 {
@@ -69,6 +76,8 @@ class Processor
 public:
     virtual ~Processor() = default;
     virtual void ConnectBlock(CBlockTx& tx, const BlockHeader& header) = 0;
+    /** Called after block was removed from the store during a reorg. */
+    virtual void DisconnectBlock(const BlockInfo& block) { (void)block; }
 };
 
 /** Records the blocks only. */

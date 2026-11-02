@@ -6,7 +6,7 @@
 #include <omnicore/tx.h>
 
 #include <base58.h>
-// omnilite-standalone: Coin and view come from test_shim.h // #include <coins.h>
+#include <coins.h>
 #include <key_io.h>
 #include <primitives/transaction.h>
 // omnilite-standalone: GetRandInt comes from test_shim.h // #include <random.h>

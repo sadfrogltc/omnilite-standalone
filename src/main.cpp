@@ -116,7 +116,15 @@ int Run(const Config& cfg)
 
         CStore store(cfg.DBPath(), Params().NetworkIDString(), cfg.undoDepth);
         RPCChainSource source(node);
-        Indexer processor(node);
+        RPCNodeData nodeData(node);
+        OmniIndexer processor(nodeData, store);
+        // OmniLite logs at debug level; -omnidebug only makes sense if that is shown.
+        if (!cfg.omniDebug.empty()) SetLogLevel(LogLevel::Debug);
+        OmniOptions options;
+        options.activationAllowSenders = cfg.activationAllowSenders;
+        options.alertAllowSenders = cfg.alertAllowSenders;
+        options.debug = cfg.omniDebug;
+        processor.Start(cfg.OmniDataDir(), options);
         Syncer syncer(source, store, processor, Params().OmniGenesisBlock(), std::chrono::seconds(cfg.pollInterval));
         LogInfo("syncing: network %s, node %s, database %s, start %d", Params().NetworkIDString(), cfg.RPCURL(),
             cfg.DBPath(), Params().OmniGenesisBlock());

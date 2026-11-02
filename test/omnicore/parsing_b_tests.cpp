@@ -8,7 +8,7 @@
 #include <omnicore/tx.h>
 
 #include <base58.h>
-// omnilite-standalone: Coin and view come from test_shim.h // #include <coins.h>
+#include <coins.h>
 #include <key_io.h>
 #include <primitives/transaction.h>
 #include <script/script.h>

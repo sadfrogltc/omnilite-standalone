@@ -7,6 +7,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
+# Like Litecoin Core: OmniLite relies on side effects inside assert(), so
+# assertions must stay on in every build type.
+foreach(flags CMAKE_C_FLAGS_RELEASE CMAKE_C_FLAGS_RELWITHDEBINFO CMAKE_C_FLAGS_MINSIZEREL
+              CMAKE_CXX_FLAGS_RELEASE CMAKE_CXX_FLAGS_RELWITHDEBINFO CMAKE_CXX_FLAGS_MINSIZEREL)
+  string(REPLACE "-DNDEBUG" "" ${flags} "${${flags}}")
+endforeach()
 
 option(OMNILITE_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 if(OMNILITE_SANITIZE)
@@ -78,21 +84,50 @@ add_library(omnilite STATIC
   src/config.cpp
   src/indexer.cpp
   src/logging.cpp
+  src/coreshim/coreshim.cpp
+  src/coreshim/policy.cpp
+  src/omnicore/activation.cpp
+  src/omnicore/consensushash.cpp
   src/omnicore/createpayload.cpp
+  src/omnicore/dbbase.cpp
+  src/omnicore/dbspinfo.cpp
+  src/omnicore/dbstolist.cpp
+  src/omnicore/dbtransaction.cpp
+  src/omnicore/dbtxlist.cpp
+  src/omnicore/dex.cpp
   src/omnicore/encoding.cpp
+  src/omnicore/log.cpp
+  src/omnicore/nftdb.cpp
+  src/omnicore/notifications.cpp
   src/omnicore/omnicore.cpp
   src/omnicore/parsing.cpp
+  src/omnicore/pending.cpp
+  src/omnicore/persistence.cpp
+  src/omnicore/rpcmbstring.cpp
   src/omnicore/rules.cpp
   src/omnicore/script.cpp
+  src/omnicore/sp.cpp
+  src/omnicore/sto.cpp
+  src/omnicore/tally.cpp
   src/omnicore/tx.cpp
   src/omnicore/utilsbitcoin.cpp
+  src/omnicore/utilsui.cpp
+  src/omnicore/walletcache.cpp
+  src/omnicore/walletutils.cpp
+  src/omnicore/convert.cpp
+  src/omnicore/parse_string.cpp
+  src/omnicore/version.cpp
   src/rpcclient.cpp
   src/store.cpp
   src/syncer.cpp)
-target_include_directories(omnilite PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(omnilite PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/coreshim)
 target_include_directories(omnilite SYSTEM PUBLIC ${LEVELDB_INCLUDE_DIR})
 target_link_libraries(omnilite PUBLIC litecoin_core PkgConfig::EVENT ${LEVELDB_LIBRARY})
 target_compile_options(omnilite PRIVATE -Wall -Wextra)
+# Code taken from OmniLite: warnings that come from building it without a wallet.
+file(GLOB OMNICORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/omnicore/*.cpp)
+set_source_files_properties(${OMNICORE_SOURCES} PROPERTIES COMPILE_OPTIONS
+  "-Wno-unused-parameter;-Wno-unused-variable;-Wno-range-loop-construct")
 
 add_executable(omnilite-standalone src/main.cpp)
 target_link_libraries(omnilite-standalone PRIVATE omnilite)
@@ -108,7 +143,24 @@ add_executable(test_omnilite
   test/rpcclient_tests.cpp
   test/store_tests.cpp
   test/syncer_tests.cpp
-  test/omnicore/exodus_tests.cpp
+  test/omnicore/alert_tests.cpp
+  test/omnicore/change_issuer_tests.cpp
+  test/omnicore/checkpoint_tests.cpp
+  test/omnicore/create_payload_tests.cpp
+  test/omnicore/crowdsale_participation_tests.cpp
+  test/omnicore/dex_purchase_tests.cpp
+  test/omnicore/encoding_b_tests.cpp
+  test/omnicore/encoding_c_tests.cpp
+  test/omnicore/mbstring_tests.cpp
+  test/omnicore/nftdb_tests.cpp
+  test/omnicore/params_tests.cpp
+  test/omnicore/rounduint64_tests.cpp
+  test/omnicore/rules_txs_tests.cpp
+  test/omnicore/script_dust_tests.cpp
+  test/omnicore/strtoint64_tests.cpp
+  test/omnicore/swapbyteorder_tests.cpp
+  test/omnicore/tally_tests.cpp
+  test/omnicore/uint256_extensions_tests.cpp
   test/omnicore/marker_tests.cpp
   test/omnicore/obfuscation_tests.cpp
   test/omnicore/output_restriction_tests.cpp
@@ -124,4 +176,8 @@ add_executable(test_omnilite
 target_link_libraries(test_omnilite PRIVATE omnilite Boost::unit_test_framework PkgConfig::EVENT_PTHREADS)
 target_include_directories(test_omnilite PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(test_omnilite PRIVATE -Wall -Wextra)
+# Tests taken from OmniLite.
+file(GLOB OMNICORE_TESTS ${CMAKE_CURRENT_SOURCE_DIR}/test/omnicore/*.cpp)
+set_source_files_properties(${OMNICORE_TESTS} PROPERTIES COMPILE_OPTIONS
+  "-Wno-unused-parameter;-Wno-unused-variable;-Wno-dangling-reference;-Wno-sign-compare")
 add_test(NAME unit COMMAND test_omnilite)

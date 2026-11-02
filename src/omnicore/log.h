@@ -56,4 +56,28 @@ inline int PrintToLog(const char* fmt, const Args&... args)
 
 inline int PrintToLog(const std::string& s) { return PrintToLog("%s", s); }
 
+/** Logs at info level, where OmniLite prints to the console. */
+template <typename... Args>
+inline int PrintToConsole(const char* fmt, const Args&... args)
+{
+    std::string s = tfm::format(fmt, args...);
+    if (!s.empty() && s.back() == '\n') s.pop_back();
+    LogLine(LogLevel::Info, s);
+    return static_cast<int>(s.size());
+}
+
+inline int PrintToConsole(const std::string& s) { return PrintToConsole("%s", s); }
+
+/** Prints to the log (OmniLite: omnicore.log). */
+int LogFilePrint(const std::string& str);
+
+/** Prints to the console. */
+int ConsolePrint(const std::string& str);
+
+/** Sets the msc_debug_* switches from -omnidebug. */
+void InitDebugLogLevels();
+
+/** OmniLite shrinks omnicore.log here; the program log is not ours to shrink. */
+void ShrinkDebugLog();
+
 #endif // OMNILITE_STANDALONE_OMNICORE_LOG_H

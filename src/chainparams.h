@@ -9,8 +9,20 @@
 // code (key_io.cpp) and the indexer need. Values are those of Litecoin Core
 // 0.18 (src/chainparams.cpp) and OmniLite 0.18.1 (src/omnicore/rules.cpp).
 
+#include <cstdint>
 #include <string>
 #include <vector>
+
+namespace Consensus {
+/** Core's consensus parameters; OmniLite only passes them on to Core functions. */
+struct Params {
+};
+} // namespace Consensus
+
+/** The genesis block; OmniLite only reads its time. */
+struct GenesisBlockInfo {
+    uint32_t nTime = 0;
+};
 
 class CChainParams
 {
@@ -35,6 +47,8 @@ public:
     /** Subdirectory of the Litecoin data directory (testnet4, regtest). */
     const std::string& DataDirSuffix() const { return strDataDirSuffix; }
     int RPCPort() const { return nRPCPort; }
+    const Consensus::Params& GetConsensus() const { return consensus; }
+    const GenesisBlockInfo& GenesisBlock() const { return genesis; }
 
     /** First block in which Omni transactions are parsed (GENESIS_BLOCK). */
     int OmniGenesisBlock() const { return nOmniGenesisBlock; }
@@ -50,6 +64,8 @@ protected:
     int nRPCPort = 0;
     int nOmniGenesisBlock = 0;
     std::string strExodusAddress;
+    Consensus::Params consensus;
+    GenesisBlockInfo genesis;
 };
 
 /** The parameters selected with SelectParams. */

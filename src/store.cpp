@@ -25,7 +25,8 @@ namespace {
 // Changes whenever the stored data changes meaning: older databases must be rebuilt.
 // 1: blocks only (phase 1).
 // 2: Omni transaction records (phase 2).
-const std::string SCHEMA_VERSION = "2";
+// 3: blocks only again; the Omni state is OmniLite's own (phase 3).
+const std::string SCHEMA_VERSION = "3";
 
 std::string HeightKey(char prefix, int64_t height)
 {
