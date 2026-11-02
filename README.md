@@ -4,7 +4,8 @@ Eigenständiger OmniLite-Indexer, der gegen jeden aktuellen `litecoind` läuft, 
 gepatchten Litecoin Core gebunden zu sein. Einzelanwender sollen damit auch Omni-Transaktionen senden
 können, über die Wallet ihres `litecoind`. Details und Phasen: [Plan.md](Plan.md).
 
-**Stand:** Phase 0 (Grundgerüst). `-check` prüft die Verbindung zum Node; indiziert wird noch nicht.
+**Stand:** Phase 0 und 1. Der Indexer folgt der Chain ab dem Omni-Genesis-Block und behandelt Reorgs;
+Omni-Transaktionen wertet er noch nicht aus.
 Noch nicht gegen einen echten `litecoind` getestet.
 
 ## Voraussetzungen (Linux)
@@ -28,7 +29,8 @@ Mit `-DOMNILITE_SANITIZE=ON` laufen Build und Tests mit AddressSanitizer und Und
 ## Starten
 
 ```bash
-./build/omnilite-standalone -check
+./build/omnilite-standalone -check   # Verbindung, Chain und txindex prüfen
+./build/omnilite-standalone          # synchronisieren (Strg+C beendet)
 ```
 
 Konfiguration: `~/.omnilite-standalone/omnilite-standalone.conf`, Vorlage in

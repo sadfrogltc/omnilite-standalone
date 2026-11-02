@@ -18,6 +18,8 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(EVENT REQUIRED IMPORTED_TARGET libevent)
 pkg_check_modules(EVENT_PTHREADS REQUIRED IMPORTED_TARGET libevent_pthreads)
 find_package(Boost 1.64 REQUIRED CONFIG COMPONENTS unit_test_framework)
+find_path(LEVELDB_INCLUDE_DIR leveldb/db.h REQUIRED)
+find_library(LEVELDB_LIBRARY leveldb REQUIRED)
 
 set(VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/core)
 
@@ -73,9 +75,13 @@ target_compile_options(litecoin_core PRIVATE -w)
 # --- OmniLite Standalone ---
 add_library(omnilite STATIC
   src/config.cpp
-  src/rpcclient.cpp)
+  src/logging.cpp
+  src/rpcclient.cpp
+  src/store.cpp
+  src/syncer.cpp)
 target_include_directories(omnilite PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(omnilite PUBLIC litecoin_core PkgConfig::EVENT)
+target_include_directories(omnilite SYSTEM PUBLIC ${LEVELDB_INCLUDE_DIR})
+target_link_libraries(omnilite PUBLIC litecoin_core PkgConfig::EVENT ${LEVELDB_LIBRARY})
 target_compile_options(omnilite PRIVATE -Wall -Wextra)
 
 add_executable(omnilite-standalone src/main.cpp)
@@ -88,7 +94,10 @@ add_executable(test_omnilite
   test/main.cpp
   test/config_tests.cpp
   test/core_tests.cpp
-  test/rpcclient_tests.cpp)
+  test/rpcclient_tests.cpp
+  test/store_tests.cpp
+  test/syncer_tests.cpp)
 target_link_libraries(test_omnilite PRIVATE omnilite Boost::unit_test_framework PkgConfig::EVENT_PTHREADS)
+target_include_directories(test_omnilite PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(test_omnilite PRIVATE -Wall -Wextra)
 add_test(NAME unit COMMAND test_omnilite)

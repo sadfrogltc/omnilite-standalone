@@ -4,9 +4,15 @@
 
 #include <chainparams.h>
 #include <config.h>
+#include <logging.h>
 #include <pubkey.h>
 #include <rpcclient.h>
+#include <store.h>
+#include <syncer.h>
 
+#include <atomic>
+#include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <iostream>
 #include <string>
@@ -82,6 +88,46 @@ bool RunCheck(const Config& cfg)
     return ok;
 }
 
+std::atomic<bool> g_stop{false};
+
+void HandleSignal(int) { g_stop = true; }
+
+/** Syncs the index with the node until SIGINT or SIGTERM. */
+int Run(const Config& cfg)
+{
+    struct sigaction sa {};
+    sa.sa_handler = HandleSignal;
+    sigaction(SIGINT, &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+
+    try {
+        std::pair<std::string, std::string> credentials = cfg.Credentials();
+        RPCClient node(cfg.rpcConnect, cfg.rpcPort, credentials.first, credentials.second);
+        std::string chain = find_value(node.Call("getblockchaininfo"), "chain").get_str();
+        if (chain != Params().CoreChain()) {
+            LogError("node at %s runs chain \"%s\", configured network is \"%s\"", cfg.RPCURL(), chain, Params().NetworkIDString());
+            return 1;
+        }
+        if (!GetTxIndexStatus(node).enabled) {
+            LogError("node runs without -txindex; restart litecoind with -txindex=1");
+            return 1;
+        }
+
+        CStore store(cfg.DBPath(), Params().NetworkIDString(), cfg.undoDepth);
+        RPCChainSource source(node);
+        NopProcessor processor;
+        Syncer syncer(source, store, processor, Params().OmniGenesisBlock(), std::chrono::seconds(cfg.pollInterval));
+        LogInfo("syncing: network %s, node %s, database %s, start %d", Params().NetworkIDString(), cfg.RPCURL(),
+            cfg.DBPath(), Params().OmniGenesisBlock());
+        syncer.Run(g_stop);
+        LogInfo("stopped");
+        return 0;
+    } catch (const std::exception& e) {
+        LogError("stopped: %s", e.what());
+        return 1;
+    }
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -103,6 +149,5 @@ int main(int argc, char* argv[])
     if (cfg.check) {
         return RunCheck(cfg) ? 0 : 1;
     }
-    std::cerr << "Indexing is not implemented yet in this build; use -check." << std::endl;
-    return 1;
+    return Run(cfg);
 }

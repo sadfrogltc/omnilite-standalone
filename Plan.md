@@ -103,6 +103,14 @@ Nach jeder Phase: Build und Unit-Tests unter Linux grün, Commit, Push. Der Abgl
 - LevelDB mit Undo-Journal, Blöcke ab Genesis lesen, Tip folgen, Reorgs zurückrollen.
 - **Fertig, wenn:** Sync und simulierte Reorgs (länger, kürzer, gleiche Höhe, tiefer als `undodepth`)
   sauber laufen.
+- **Stand:** umgesetzt (`src/store.*`, `src/syncer.*`). LevelDB unter `<datadir>/<network>/index`, jeder Block
+  ein atomarer Batch mit Block-Eintrag, State-Änderungen und Undo-Datensatz (Wert jedes geänderten Schlüssels
+  vor dem Block). Undo-Daten werden nach `undodepth` Blöcken gelöscht; ein tieferer Reorg bricht mit klarer
+  Meldung ab. Der Syncer folgt dem Tip per Polling, erkennt Reorgs über `previousblockhash` und, im
+  eingeholten Zustand, über den Hash an der eigenen Tip-Höhe. Node-Fehler werden geloggt und wiederholt,
+  falsche Zugangsdaten beenden das Programm. Strg+C bzw. SIGTERM beenden sauber. Getestet: Store (Undo,
+  Pruning, Scan, Wiedereröffnen, falsches Netz) und Syncer mit simulierter Chain (alle Reorg-Fälle,
+  Wiederholung nach Node-Fehlern). Ein Sync gegen einen echten `litecoind` steht aus.
 
 ### Phase 2 – Decoder
 - `parseTransaction` aus `omnicore.cpp`: Class A/B/C, Sender, Referenz, Class-B-Entschleierung, Payload,

@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <rpcclient.h>
+#include <syncer.h>
 
 #include <util/strencodings.h>
 
@@ -79,6 +80,21 @@ private:
             reply.pushKV("result", NullUniValue);
             reply.pushKV("error", error);
             status = 500;
+        } else if (method == "getblockhash" && find_value(request, "params")[0].get_int64() > 5) {
+            UniValue error(UniValue::VOBJ);
+            error.pushKV("code", -8);
+            error.pushKV("message", "Block height out of range");
+            reply.pushKV("result", NullUniValue);
+            reply.pushKV("error", error);
+            status = 500;
+        } else if (method == "getblockheader") {
+            UniValue header(UniValue::VOBJ);
+            header.pushKV("hash", find_value(request, "params")[0]);
+            header.pushKV("height", 5);
+            header.pushKV("previousblockhash", "parent");
+            header.pushKV("time", 1700000000);
+            reply.pushKV("result", header);
+            reply.pushKV("error", NullUniValue);
         } else if (method == "path") {
             reply.pushKV("result", evhttp_request_get_uri(req));
             reply.pushKV("error", NullUniValue);
@@ -130,6 +146,23 @@ BOOST_AUTO_TEST_CASE(errors)
     }
     RPCClient wrong("127.0.0.1", fake.port, "user", "nope", 10);
     BOOST_CHECK_THROW(wrong.Call("getblockcount"), NodeUnauthorized);
+}
+
+BOOST_AUTO_TEST_CASE(chain_source)
+{
+    FakeNode fake;
+    RPCClient node("127.0.0.1", fake.port, "user", "pass", 10);
+    RPCChainSource source(node);
+    BOOST_CHECK_EQUAL(source.GetBlockHash(5), "getblockhash/1");
+    BOOST_CHECK_THROW(source.GetBlockHash(6), HeightOutOfRange);
+    BlockHeader h = source.GetBlockHeader("abc");
+    BOOST_CHECK_EQUAL(h.hash, "abc");
+    BOOST_CHECK_EQUAL(h.height, 5);
+    BOOST_CHECK_EQUAL(h.prevHash, "parent");
+    BOOST_CHECK_EQUAL(h.time, 1700000000);
+    RPCClient wrong("127.0.0.1", fake.port, "user", "nope", 10);
+    RPCChainSource wrongSource(wrong);
+    BOOST_CHECK_THROW(wrongSource.GetBlockCount(), NodeUnauthorized); // not a retryable NodeError
 }
 
 BOOST_AUTO_TEST_CASE(unreachable)
