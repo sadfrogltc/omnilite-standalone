@@ -1,0 +1,20 @@
+# OmniLite Standalone configuration
+# Location: ~/.omnilite-standalone/omnilite-standalone.conf
+# Every key can also be given on the command line, e.g. -network=regtest.
+
+# main, test or regtest
+network=main
+
+# litecoind RPC. Needs -txindex=1 and an unpruned chain.
+rpcconnect=127.0.0.1
+#rpcport=9332
+#rpcuser=
+#rpcpassword=
+# Used when rpcpassword is empty. Default: ~/.litecoin/.cookie (testnet4/, regtest/ for the other networks).
+#rpccookiefile=
+
+# Seconds between checks for new blocks once synced.
+#pollinterval=5
+
+# Blocks of undo data kept for reorgs (minimum 10).
+#undodepth=100

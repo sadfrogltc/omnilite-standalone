@@ -1,0 +1,183 @@
+# OmniLite Standalone – Plan
+
+**OmniLite Standalone** ist ein eigenständiger OmniLite-Indexer, der **nicht** an eine bestimmte
+Litecoin-Core-Version gekoppelt ist. Er verbindet sich per Standard-RPC mit einem beliebigen, aktuellen
+`litecoind`, liest die Blöcke, dekodiert Omni-Transaktionen selbst, berechnet den kompletten Omni-State
+(Balances, Properties, Crowdsales, DEx, NFTs, Freeze, Activations) und stellt ihn über eine API bereit.
+
+Für Einzelanwender kann er außerdem **Omni-Transaktionen senden**. Schlüssel, Signieren und Coins bleiben
+bei der **Wallet des `litecoind`**; eine eigene Wallet gibt es nicht. Als Provider (z. B. für eine
+Website) läuft er als reiner Indexer.
+
+**Kernidee:** Die Omni-Logik lebt außerhalb von Core. Core-Updates (0.21, MWEB, alles danach) betreffen
+uns nur noch, wenn sich die Standard-RPC-Schnittstelle ändert – und die ist sehr stabil.
+
+**Vorgeschichte:** Eine erste Fassung (Phase 0 bis 9) entstand in Go und liegt archiviert unter
+`github.com/tbuuol/omnilite-standalone-go`. Sie wurde nie gegen eine echte Node getestet. Diese Fassung
+ist in C++ wie OmniLite selbst und übernimmt deren Code, wo es geht. Die in der Go-Fassung gesammelten
+Erkenntnisse über OmniLite stehen in Abschnitt 7.
+
+---
+
+## 1. Ziele und Nicht-Ziele
+
+**Ziele**
+- Konsens-identisch mit OmniLite 0.18.1 (`omnilitecored`) – bit-genau, nachweisbar per Consensus-Hash.
+- Läuft gegen jeden `litecoind` ab 0.18 (Ziel: aktuelles 0.21.x).
+- Reorg-sicher.
+- `omni_*`-kompatible JSON-RPC-Schnittstelle, damit bestehende Tools und die LiteWorlds-Website nur
+  den Endpoint tauschen müssen.
+- Senden: alle Omni-Aktionen von `omnilitecored` über die Wallet des Nodes (`wallet=1`).
+- Keine verbrannten Gebühren: Jede Omni-Tx wird vor dem Senden gegen den eigenen State geprüft.
+- DEx: Zahlen ist immer eine bewusste Aktion des Nutzers, nie automatisch.
+
+**Nicht-Ziele (vorerst)**
+- Keine eigene P2P-Anbindung (nur RPC).
+- Keine eigene Wallet: keine Schlüssel, kein Seed, kein Keystore.
+- Keine Protokolländerungen. Wir bilden 0.18.1 nach, Fehler eingeschlossen.
+- Kein Windows, solange der Linux-Build nicht stabil und getestet ist.
+
+---
+
+## 2. Technik
+
+- **Sprache:** C++17, wie Litecoin Core 0.21. Build mit CMake. Ziel ist Linux (entwickelt unter Ubuntu
+  26.04 in WSL2, gcc 15).
+- **Übernommener Code** (`vendor/core`, MIT): die Bausteine aus Litecoin Core 0.18 im OmniLite-Repo
+  (`uint256`, Serialisierung, Hashes, Script, Adressen, UniValue, libsecp256k1). Herkunft und alle
+  Änderungen stehen in `vendor/VENDOR.md`. Die Omni-Logik (`src/omnicore/*`) wird ab Phase 2
+  übernommen; wo sie auf Core zugreift (`cs_main`, `CCoinsViewCache`, `chainActive`, Wallet), ersetzt
+  eine dünne Schicht diese Stellen durch Daten aus dem RPC.
+- **Bibliotheken:** libevent (HTTP-Client zur Node und RPC-Server, wie Core), LevelDB (wie OmniLite),
+  Boost (Header, Boost.Test).
+- **Datenquelle:** `getblock <hash> 2` liefert alle Txs dekodiert. Für die Sender-Bestimmung braucht es
+  die Prevouts der Inputs, also `getrawtransaction` mit `-txindex` am Node.
+- **Reorgs:** Jede State-Änderung eines Blocks bekommt einen Undo-Eintrag. Bei einem Reorg wird blockweise
+  bis zum gemeinsamen Vorfahren zurückgerollt; Undo-Daten älter als `undodepth` Blöcke werden gelöscht.
+
+---
+
+## 3. Fakten aus OmniLite 0.18.1 (Referenz)
+
+Quelle: `github.com/OmniLite/omnilite`, Branch `master` = 0.18.1, Commit `fbc27c1` vom 2022-05-18.
+
+| Parameter | Mainnet |
+|---|---|
+| `GENESIS_BLOCK` | 2 010 500 (Testnet und Regtest: 101) |
+| Exodus-Adresse | `LTceXoduS2cetpWJSe47M25i5oKjEccN1h` |
+| Class-C-Marker | `0x6f6d6e69` ("omni") im OP_RETURN |
+| NFT-Feature | ab Block 2 262 000 |
+| STO v1, Freeze-Notice, NFT-Issuer-Daten | nur per Activation |
+| FREEDEX | ab Genesis |
+| Mainnet-Consensus-Checkpoints | keine |
+
+**Transaktionstypen:** 0 Simple Send, 3 STO, 4 Send All, 5 Send NFT, 20 DEx Sell Offer, 22 DEx Accept,
+50 Fixed Issuance, 51 Crowdsale, 53 Close Crowdsale, 54 Managed Issuance, 55 Grant, 56 Revoke,
+70 Change Issuer, 71/72 Enable/Disable Freezing, 185/186 Freeze/Unfreeze, 200 Any Data, 201 NFT Data,
+65533 Deactivation, 65534 Activation, 65535 Alert. Kein MetaDEx, Restricted Send ist strukturell ungültig.
+
+**Adressen:** Sender und Referenz nur P2PKH (`L…`) und P2SH (`M…`). Bech32 (`ltc1…`) kann kein
+Omni-Sender sein.
+
+**Sender:** Class C = Adresse des ersten Inputs; Class A/B = Adresse mit der größten Input-Summe
+(bei Gleichstand die kleinste, wie `std::map`). Referenz: der einzige Kandidat, sonst der letzte, wobei der
+erste Output zurück an den Sender als Change übersprungen wird.
+
+---
+
+## 4. Phasen
+
+Nach jeder Phase: Build und Unit-Tests unter Linux grün, Commit, Push. Der Abgleich mit einem echten
+`litecoind` und `omnilitecored` kommt, sobald eine Testumgebung bereitsteht (Abschnitt 5).
+
+### Phase 0 – Grundgerüst
+- CMake-Projekt, übernommene Core-Bausteine, Config (Datei und Kommandozeile), RPC-Client über libevent,
+  Prüfung auf `-txindex`.
+- **Fertig, wenn:** `omnilite-standalone -check` Node-Version, Höhe und txindex-Status meldet.
+- **Stand:** umgesetzt. Config wie `litecoin.conf` (`network`, `rpcconnect`, `rpcport`, `rpcuser`,
+  `rpcpassword`, `rpccookiefile`, `pollinterval`, `undodepth`), Cookie von `litecoind` als Standard,
+  `-check` prüft Node, Chain, Höhe, Sync, txindex (über `getindexinfo` bzw. bei älteren Nodes über den
+  Coinbase-Test) und Pruning. Getestet mit einem simulierten `litecoind` über HTTP; ein echter Node steht aus.
+
+### Phase 1 – Block-Pipeline und Reorgs
+- LevelDB mit Undo-Journal, Blöcke ab Genesis lesen, Tip folgen, Reorgs zurückrollen.
+- **Fertig, wenn:** Sync und simulierte Reorgs (länger, kürzer, gleiche Höhe, tiefer als `undodepth`)
+  sauber laufen.
+
+### Phase 2 – Decoder
+- `parseTransaction` aus `omnicore.cpp`: Class A/B/C, Sender, Referenz, Class-B-Entschleierung, Payload,
+  dazu `interpret_Transaction` aus `tx.cpp` (OmniLite speichert Txs mit kaputtem Payload gar nicht).
+
+### Phase 3 – Basis-State
+- Simple Send, Send All, Issuance, Grant/Revoke, Change Issuer, Any Data, Activations, Alerts.
+
+### Phase 4 – Komplexe Logik
+- Crowdsales, STO, DEx (Offer, Accept, Zahlung, Ablauf), Freeze, NFTs, Consensus-Hash.
+
+### Phase 5 – API
+- JSON-RPC-Server (libevent) mit den `omni_*`-Aufrufen im Format von `omnilitecored`, lesende
+  Litecoin-Aufrufe werden an `litecoind` durchgereicht.
+
+### Phase 6 – Mempool und Pending
+- Unbestätigte Omni-Txs, `omni_listpendingtransactions`.
+
+### Phase 7 bis 9 – Senden über die Node-Wallet
+- 7: Tx-Builder (Class C/B), Dry-Run, `omni_send` und Verwandte, `omni_createpayload_*`, `omni_createrawtx_*`.
+- 8: Token-Verwaltung (Issuance, Grant/Revoke, Crowdsale, Freeze, STO, NFT-Daten).
+- 9: DEx (Sell, Accept, Pay) mit Zahlungs-Wächter, der nie selbst zahlt.
+
+### Später
+- Snapshot-Export und -Import, Status-Aufruf (Höhe, Abstand zur Node, Reorgs), systemd-Unit.
+- Windows erst, wenn Linux stabil und getestet ist.
+
+---
+
+## 5. Verifikation
+
+1. **Referenz-Node:** `omnilitecored` 0.18.1 mit `-txindex`, dazu ein aktueller `litecoind`, beide unter Linux.
+2. **Abgleich:** Consensus-Hash je Höhe, alle Omni-Txs per `omni_gettransaction`, Endstand (Properties,
+   Balances, DEx, NFTs). Ein Vergleichsskript meldet den ersten abweichenden Block.
+3. **Regtest:** gezielte Txs gegen beide Implementierungen, auch jede Tx, die unser Builder baut.
+4. **Unit-Tests** aus `src/omnicore/test` übernehmen.
+
+---
+
+## 6. Risiken
+
+| Thema | Risiko | Umgang |
+|---|---|---|
+| MWEB (Litecoin 0.21) | Txs, die Peg-out-Outputs ausgeben, sehen für 0.18 anders aus. | Nur sehen, was 0.18 sieht; gezielter Test. |
+| Verlorene Gebühren | Omni-ungültige Txs landen trotzdem in der Chain. | Pflicht-Dry-Run vor jedem Broadcast. |
+| DEx-Zahlung | Zu spät oder an den falschen Seller → LTC weg. | Dry-Run muss einen Kauf ergeben, Warnung kurz vor Ablauf. |
+| Übernommener Code | Core-Code erwartet einen vollen Node. | Nur Bausteine übernehmen, Änderungen in `VENDOR.md` festhalten. |
+| Speicherfehler | C++. | Tests auch mit `-DOMNILITE_SANITIZE=ON` (ASan, UBSan). |
+| `-txindex` | Nicht jeder Node hat ihn. | Vorausgesetzt, `-check` meldet es. |
+
+---
+
+## 7. Eigenheiten von OmniLite (aus der Go-Fassung)
+
+Diese Punkte wurden beim Lesen des Quellcodes gefunden und müssen genau so nachgebaut werden. Bestätigt
+gegen einen echten Node ist noch keiner.
+
+- `HashToAddress` kennt nur die Versionsbytes 48 (`L`) und 5, nicht 50 (`M`). Ein Freeze an eine
+  `M…`-Adresse mit Versionsbyte 50 ist strukturell ungültig; beim Senden schreiben wir deshalb 5.
+- `getIssuer` vergleicht nur Blockhöhen: Ein Issuer-Wechsel später im selben Block zählt schon.
+- Change Issuer auf Property 1/2 ändert nichts. Deaktivierung von Feature 18 setzt Block 999 999.
+- Im Consensus-Hash wird der Verkäufer eines Offers durch Abschneiden von zwei Zeichen aus `addr-prop`
+  gewonnen; ab Property 10 steht dort ein Teil der Property-ID mit drin.
+- DEx-Zahlung mit FREEDEX: Es zählt nur das erste aktuelle Offer des Verkäufers.
+- STO ist praktisch immer ungültig (-50027), weil es keine OMNI-/TOMNI-Tokens für die Gebühr gibt.
+- NFT-Daten (Typ 201) ersetzen nur Ranges, die ab dem Start lückenlos gefunden werden.
+- Unique Send prüft `GetAvailableTokenBalance` mit den Pending-Beträgen der eigenen Wallet; das ist
+  knotenabhängig und gehört nicht zum Konsens.
+- Accepts laufen am Blockende ab, wenn `Höhe - Accept-Block >= Payment Window`; eine Zahlung im letzten
+  Block des Fensters zählt noch.
+- `omni_createpayload_grant` verlangt das Memo, `RequireSameEcosystem` vergleicht die Ecosystem-Nummer
+  wie eine Property-ID, `RequireSaneDExFee` nennt 0,02 LTC, prüft aber 0,01.
+
+**Entschieden**
+- Projektname **OmniLite Standalone**, Repo `github.com/tbuuol/omnilite-standalone`, Lizenz MIT.
+- C++ wie OmniLite, Linux zuerst, Windows später.
+- Keine eigene Wallet, Senden über die Wallet des `litecoind`. DEx-Zahlung nie automatisch.
+- Absender und Empfänger nur `L…`/`M…`, neue Adressen per `getnewaddress "" p2sh-segwit`.
