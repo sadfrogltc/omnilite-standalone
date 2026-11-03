@@ -284,6 +284,29 @@ Nach jeder Phase: Build und Unit-Tests unter Linux grün, Commit, Push. Der Abgl
   abgeschnittene Datei; Export bei laufendem Programm, falscher und fehlender Hash, Block nicht in der
   Chain, Node zu weit hinten, ein geändertes Byte, erfolgreicher Import mit gleichem Stand, Import über
   vorhandene Daten.
+- **Stand Abgleich mit OmniLite (simuliert):**
+  - Code: jede Datei in `src/omnicore` gegen OmniLite `fbc27c1` verglichen. Alle 17 geänderten Dateien
+    stehen in `ORIGIN.md`, jede Änderung ist markiert; im Blockablauf ändert sich an den Regeln nichts.
+    `vendor/core` weicht nur in den drei Dateien aus `VENDOR.md` ab; Dust-/Relay-Gebühr, Adress-Präfixe,
+    bech32 und Omni-Genesis stimmen mit dem Original überein.
+  - Verhalten: `test/regtest/compare_with_omnilited.py` lässt das offizielle Release `omnilited`
+    v0.18.2 (gebaut aus `fbc27c1`) auf Regtest als Node laufen, unser Programm indexiert von ihm. Ein
+    Szenario sendet 31 Txs, teils über `omnilited`, teils über unsere API (also mit unserem Builder
+    und Probelauf, signiert von `omnilited`s Wallet): Fixed/Managed/Crowdsale-Issuance in beiden
+    Ökosystemen, Sends auch von P2SH-segwit, Funded Send, Grant/Revoke, Freeze (auch eine Sendung von
+    eingefrorener Adresse), Crowdsale-Teilnahme und -Schluss, Issuer-Wechsel, NFTs mit Holder- und
+    Issuer-Daten, Send All, Any Data, eine Überweisung über das Guthaben und STO ohne OMNI. Nach jedem
+    Block werden Block-Txs, jede Tx und der Consensus-Hash verglichen, an vier Stellen der ganze Stand
+    (Properties, Guthaben, Grants, Crowdsales, NFTs, DEx, Wallet-Aufrufe) – nach dem Szenario, nach einem
+    Reorg von drei Blöcken, nach einem Neustart und nach einem Umzug per Snapshot (importiert mit dem
+    Consensus-Hash von `omnilited`). Ergebnis: 331 Vergleiche, 0 Abweichungen, in zwei Läufen.
+  - Dabei gefunden und behoben: `omni_listblocktransactions` liest den Block, und bei uns blieb er im
+    Replay-Speicher des Indexers liegen; bis zum nächsten Block zeigte `omni_gettransaction` dessen
+    Txs als unbestätigt. Jetzt füllt nur die Verarbeitung (Start, Block) diesen Speicher.
+  - Bekannt, aber keine Abweichung im Stand: Listen aus OmniLites `unordered_map` (z. B.
+    `omni_getallbalancesforid`) haben keine feste Reihenfolge, auch im Original nicht.
+  - Nicht abgedeckt, weil Regtest es nicht kann: DEx-Zahlungen und Class B (Exodus ist dort P2SH),
+    STO mit OMNI, Activations. Dafür braucht es Testnet oder Mainnet-Daten.
 
 ### Später
 - Windows erst, wenn Linux stabil und getestet ist.

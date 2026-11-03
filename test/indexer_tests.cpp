@@ -344,6 +344,10 @@ BOOST_AUTO_TEST_CASE(api_answers_from_the_state)
     UniValue blockTxs = call("omni_listblocktransactions", {UniValue(start + 1)});
     BOOST_REQUIRE_EQUAL(blockTxs.size(), 1u);
     BOOST_CHECK_EQUAL(blockTxs[0].get_str(), send->GetHash().GetHex());
+    // Reading the block for the list leaves nothing behind: the transaction is still confirmed.
+    UniValue again = call("omni_gettransaction", {UniValue(send->GetHash().GetHex())});
+    BOOST_CHECK_EQUAL(find_value(again, "confirmations").get_int(), 1);
+    BOOST_CHECK(find_value(again, "valid").isTrue());
 
     // Unknown transactions get omnilitecored's error.
     BOOST_CHECK_EXCEPTION(call("omni_gettransaction", {UniValue(uint256S("01").GetHex())}), RPCError,

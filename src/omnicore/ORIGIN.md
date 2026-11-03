@@ -31,7 +31,7 @@ Rückkehr zu einem gesicherten State bei Reorgs (`RewindDBsAndState`, `msc_initi
 | `walletutils.h`, `wallettxbuilder.h` | `SelectCoins`, `SelectAllCoins`, `CreateFundedTransaction` auch ohne `ENABLE_WALLET` deklariert |
 | `walletutils.cpp`, `walletfetchtxs.cpp` | `IsMyAddress` und `FetchWalletOmniTransactions` auch ohne `ENABLE_WALLET` |
 | `wallettxbuilder.cpp` | nicht übernommen: `WalletTxBuilder` und `CreateFundedTransaction` sind in `src/nodewallet.cpp` über die Wallet der Node neu geschrieben, mit dem Ablauf des Originals |
-| `tx.h`, `tx.cpp` | Probelauf (`dryRun`, `setDryRun`, für `src/dryrun.cpp`): jede `logicMath_*` endet vor dem ersten Buchen mit 0, Sell Offer und Accept prüfen über `dryRun_TradeOffer`/`dryRun_AcceptOffer`; `interpretPacket` nimmt im Probelauf den Tip als Block und prüft Activations/Alerts nicht. Ohne Probelauf unverändert |
+| `tx.h`, `tx.cpp` | Probelauf (`dryRun`, `setDryRun`, für `src/dryrun.cpp`): jede `logicMath_*` endet vor dem ersten Buchen mit 0, Sell Offer und Accept prüfen über `dryRun_TradeOffer`/`dryRun_AcceptOffer`; `interpretPacket` nimmt im Probelauf den Tip als Block und prüft Activations/Alerts nicht. Ohne Probelauf unverändert, bis auf eine Null-Prüfung des Blocks in `interpretPacket` (das Original würde dort abstürzen; im Blockablauf tritt der Fall nicht auf) |
 | `log.h`, `log.cpp` | ersetzt: gleiche Flags, `PrintToLog`, `PrintToConsole` und `InitDebugLogLevels` (wörtlich), aber Ausgabe ins Programm-Log (Debug- bzw. Info-Ebene) statt `omnicore.log`; `g_omniLogCapture` sammelt die Zeilen für den Probelauf |
 
 ## Build

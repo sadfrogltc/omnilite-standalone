@@ -100,6 +100,23 @@ private:
     std::map<uint256, CTransactionRef> m_blockTxs;
     std::map<uint256, CTransactionRef> m_replayTxs;
     Prefetched m_prefetched;
+    /** Whether OmniLite runs for the indexer (start-up, a block), not for an API call. */
+    bool m_processing = false;
+
+    /** While it lives the indexer is processing; the caches are empty before and after. */
+    struct Processing {
+        OmniIndexer& self;
+        explicit Processing(OmniIndexer& s) : self(s)
+        {
+            self.ClearBlockCaches();
+            self.m_processing = true;
+        }
+        ~Processing()
+        {
+            self.m_processing = false;
+            self.ClearBlockCaches();
+        }
+    };
 };
 
 #endif // OMNILITE_STANDALONE_INDEXER_H

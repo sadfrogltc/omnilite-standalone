@@ -27,6 +27,14 @@ cmake --build build -j
 
 Mit `-DOMNILITE_SANITIZE=ON` laufen Build und Tests mit AddressSanitizer und UndefinedBehaviorSanitizer.
 
+Abgleich mit OmniLite selbst: das Skript startet `omnilited` (offizielles Release) auf Regtest, lässt
+dieses Programm von ihm indexieren, sendet Omni-Transaktionen aller Art über beide und vergleicht nach
+jedem Block Transaktionen, Stand und Consensus-Hash (Exit-Code 0, wenn alles gleich ist):
+
+```bash
+python3 test/regtest/compare_with_omnilited.py --omnilited <pfad>/omnilited --standalone ./build/omnilite-standalone
+```
+
 ## Starten
 
 ```bash

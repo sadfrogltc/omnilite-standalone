@@ -163,12 +163,11 @@ void OmniIndexer::Start(const fs::path& dataDir, const OmniOptions& options)
 
     m_started = true;
     try {
+        Processing processing(*this);
         mastercore_init();
     } catch (const NodeError& e) {
-        ClearBlockCaches();
         throw FatalError(std::string("loading the Omni state: ") + e.what());
     }
-    ClearBlockCaches();
     if (NodeAborted()) throw FatalError("OmniLite stopped while loading its state, see the log");
 }
 
@@ -184,9 +183,14 @@ bool OmniIndexer::ReadBlock(const CBlockIndex* pindex, std::vector<CTransactionR
     // OmniLite replays blocks after a reorg or at start-up; the node must
     // answer, a missing block would leave the state incomplete.
     txs = m_node.GetBlockTxs(pindex->GetBlockHash().GetHex());
-    m_replayTxs.clear();
-    for (const CTransactionRef& tx : txs) {
-        if (tx) m_replayTxs[tx->GetHash()] = tx;
+    // Only a replay keeps the block for the lookups that follow. API calls
+    // read blocks too (omni_listblocktransactions); they must leave nothing
+    // behind, or later lookups would take its transactions for unconfirmed.
+    if (m_processing) {
+        m_replayTxs.clear();
+        for (const CTransactionRef& tx : txs) {
+            if (tx) m_replayTxs[tx->GetHash()] = tx;
+        }
     }
     return true;
 }
@@ -243,13 +247,9 @@ void OmniIndexer::ConnectBlock(CBlockTx&, const BlockHeader& header)
     Prefetched prefetched = Prefetch(txs, blockTxs, header.height);
 
     LOCK(cs_main);
-    ClearBlockCaches();
+    Processing processing(*this);
     m_blockTxs.swap(blockTxs);
     m_prefetched.swap(prefetched);
-    struct ClearOnExit {
-        OmniIndexer& self;
-        ~ClearOnExit() { self.ClearBlockCaches(); }
-    } clearOnExit{*this};
 
     CBlockIndex* tip = chainActive.Tip();
     if (tip && tip->GetBlockHash().GetHex() != header.prevHash) {
