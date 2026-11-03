@@ -811,4 +811,144 @@ BOOST_AUTO_TEST_CASE(pending_transactions_from_the_mempool)
     watcher.Refresh();
 }
 
+/**
+ * Token management as a user does it: each call goes through the API, the
+ * node's wallet sends, the transaction is mined and OmniLite books it.
+ */
+BOOST_AUTO_TEST_CASE(token_management_through_the_api)
+{
+    const CScript dave = ScriptFor(0xd4);
+    const std::string A = AddressOf(alice), B = AddressOf(bob), C = AddressOf(carol), D = AddressOf(dave);
+    FakeWallet wallet;
+    for (const CScript* who : {&alice, &bob, &carol}) {
+        wallet.mine.insert(AddressOf(*who));
+        const COutPoint coin = node.Fund(*who, 5 * COIN);
+        wallet.coins.push_back({coin, node.txs[coin.hash]->vout[0], AddressOf(*who)});
+    }
+    FakeLitecoind litecoind;
+    litecoind.handler = [&](const std::string& m, const UniValue& p, const std::string& u, UniValue& r, UniValue& e) { return wallet.Handle(m, p, u, r, e); };
+    RPCClient nodeRPC("127.0.0.1", litecoind.port, "user", "pass", 10);
+
+    RegisterOmniRPCCommands();
+    if (RPCIsInWarmup(nullptr)) SetRPCWarmupFinished();
+    SetWalletNode(&nodeRPC);
+    APIOptions options;
+    options.user = "u";
+    options.password = "p";
+    APIServer api(options, &nodeRPC);
+    api.Start();
+    RPCClient client("127.0.0.1", api.Port(), "u", "p", 10);
+
+    // A first block: before any, no input type is allowed yet (height -1).
+    Connect("t-start", start, {});
+    int64_t height = start + 1;
+    auto call = [&](const std::string& method, std::vector<UniValue> args) {
+        UniValue params(UniValue::VARR);
+        for (const UniValue& a : args) params.push_back(a);
+        return client.Call(method, params);
+    };
+    // Sends through the API, mines the transaction in the next block and
+    // returns it as OmniLite sees it.
+    auto sendAndMine = [&](const std::string& method, std::vector<UniValue> args) {
+        BOOST_TEST_CHECKPOINT(method);
+        const size_t before = wallet.sent.size();
+        call(method, args);
+        BOOST_REQUIRE_EQUAL(wallet.sent.size(), before + 1);
+        CTransactionRef tx = wallet.sent.back();
+        Connect(strprintf("t%d", height), height, {tx});
+        ++height;
+        UniValue info = call("omni_gettransaction", {UniValue(tx->GetHash().GetHex())});
+        BOOST_CHECK_MESSAGE(find_value(info, "valid").isTrue(), method << ": " << info.write());
+        return info;
+    };
+    auto property = [&](int id) { return call("omni_getproperty", {UniValue(id)}); };
+    auto balanceField = [&](const std::string& who, int id, const std::string& field) {
+        return find_value(call("omni_getbalance", {UniValue(who), UniValue(id)}), field).get_str();
+    };
+    UniValue no;
+    no.setBool(false);
+
+    // Managed property 3: alice is the issuer, nothing issued yet.
+    sendAndMine("omni_sendissuancemanaged", {UniValue(A), UniValue(1), UniValue(MSC_PROPERTY_TYPE_DIVISIBLE), UniValue(0),
+        UniValue("Companies"), UniValue("Mining"), UniValue("Quantum"), UniValue("example.com"), UniValue("Quantum tokens")});
+    BOOST_CHECK(find_value(property(3), "managedissuance").isTrue());
+    BOOST_CHECK_EQUAL(find_value(property(3), "issuer").get_str(), A);
+    BOOST_CHECK_EQUAL(find_value(property(3), "totaltokens").get_str(), "0.00000000");
+
+    // Only the issuer may grant: OmniLite refuses before anything is built or sent.
+    BOOST_CHECK_THROW(call("omni_sendgrant", {UniValue(B), UniValue(B), UniValue(3), UniValue("1")}), RPCError);
+    BOOST_CHECK_EQUAL(wallet.sent.size(), 1u);
+
+    // Grants to bob and to the issuer herself, a revoke from her.
+    sendAndMine("omni_sendgrant", {UniValue(A), UniValue(B), UniValue(3), UniValue("1000"), UniValue("first")});
+    sendAndMine("omni_sendgrant", {UniValue(A), UniValue(""), UniValue(3), UniValue("500")});
+    sendAndMine("omni_sendrevoke", {UniValue(A), UniValue(3), UniValue("200")});
+    BOOST_CHECK_EQUAL(Balance(bob, 3), 1000 * COIN);
+    BOOST_CHECK_EQUAL(Balance(alice, 3), 300 * COIN);
+    BOOST_CHECK_EQUAL(find_value(property(3), "totaltokens").get_str(), "1300.00000000");
+    BOOST_CHECK_EQUAL(find_value(call("omni_getgrants", {UniValue(3)}), "issuances").size(), 3u);
+
+    // Freezing: enabled, used, undone. Without the freeze notice feature (not active
+    // on mainnet either) there is no waiting period.
+    sendAndMine("omni_sendenablefreezing", {UniValue(A), UniValue(3)});
+    sendAndMine("omni_sendfreeze", {UniValue(A), UniValue(B), UniValue(3), UniValue("1000")});
+    BOOST_CHECK_EQUAL(balanceField(B, 3, "frozen"), "1000.00000000");
+    sendAndMine("omni_sendunfreeze", {UniValue(A), UniValue(B), UniValue(3), UniValue("1000")});
+    BOOST_CHECK_EQUAL(balanceField(B, 3, "frozen"), "0.00000000");
+    sendAndMine("omni_senddisablefreezing", {UniValue(A), UniValue(3)});
+    BOOST_CHECK(!mastercore::isFreezingEnabled(3, height));
+
+    // Send to owners: bob is the only other holder. The fee is paid in OMNI,
+    // which alice gets here directly.
+    {
+        LOCK(cs_tally);
+        BOOST_REQUIRE(mastercore::update_tally_map(A, OMNI_PROPERTY_MSC, COIN, BALANCE));
+    }
+    UniValue sto = sendAndMine("omni_sendsto", {UniValue(A), UniValue(3), UniValue("100")});
+    BOOST_CHECK_EQUAL(Balance(bob, 3), 1100 * COIN);
+    BOOST_CHECK_EQUAL(Balance(alice, 3), 200 * COIN);
+    BOOST_CHECK_EQUAL(Balance(alice, OMNI_PROPERTY_MSC), COIN - 1);
+    BOOST_CHECK_EQUAL(find_value(call("omni_getsto", {find_value(sto, "txid"), UniValue("*")}), "recipients").size(), 1u);
+
+    // A crowdsale of carol for property 3: bob takes part, carol closes it.
+    sendAndMine("omni_sendissuancecrowdsale", {UniValue(C), UniValue(1), UniValue(MSC_PROPERTY_TYPE_DIVISIBLE), UniValue(0),
+        UniValue("Companies"), UniValue("Mining"), UniValue("Crowd"), UniValue(""), UniValue(""),
+        UniValue(3), UniValue("2"), UniValue(int64_t{2000000000}), UniValue(0), UniValue(0)});
+    BOOST_CHECK(find_value(call("omni_getcrowdsale", {UniValue(4)}), "active").isTrue());
+    sendAndMine("omni_send", {UniValue(B), UniValue(C), UniValue(3), UniValue("50")});
+    BOOST_CHECK_EQUAL(Balance(bob, 4), 100 * COIN);
+    BOOST_CHECK_EQUAL(Balance(carol, 3), 50 * COIN);
+    sendAndMine("omni_sendclosecrowdsale", {UniValue(C), UniValue(4)});
+    BOOST_CHECK(find_value(call("omni_getcrowdsale", {UniValue(4)}), "active").isFalse());
+
+    // A new issuer for property 3, and all of bob's tokens to dave.
+    sendAndMine("omni_sendchangeissuer", {UniValue(A), UniValue(D), UniValue(3)});
+    BOOST_CHECK_EQUAL(find_value(property(3), "issuer").get_str(), D);
+    sendAndMine("omni_sendall", {UniValue(B), UniValue(D), UniValue(1)});
+    BOOST_CHECK_EQUAL(Balance(bob, 3), 0);
+    BOOST_CHECK_EQUAL(Balance(bob, 4), 0);
+    BOOST_CHECK_EQUAL(Balance(dave, 3), 1050 * COIN);
+    BOOST_CHECK_EQUAL(Balance(dave, 4), 100 * COIN);
+
+    // Non-fungible tokens: issued, three sent to bob, who sets their data.
+    sendAndMine("omni_sendissuancemanaged", {UniValue(A), UniValue(1), UniValue(MSC_PROPERTY_TYPE_NONFUNGIBLE), UniValue(0),
+        UniValue("Art"), UniValue(""), UniValue("Pictures"), UniValue(""), UniValue("")});
+    sendAndMine("omni_sendgrant", {UniValue(A), UniValue(A), UniValue(5), UniValue("10")});
+    sendAndMine("omni_sendnonfungible", {UniValue(A), UniValue(B), UniValue(5), UniValue(1), UniValue(3)});
+    BOOST_CHECK_EQUAL(Balance(bob, 5), 3);
+    BOOST_CHECK_EQUAL(Balance(alice, 5), 7);
+    sendAndMine("omni_setnonfungibledata", {UniValue(5), UniValue(1), UniValue(3), no, UniValue("bob's")});
+    UniValue nftData = call("omni_getnonfungibletokendata", {UniValue(5), UniValue(1), UniValue(3)});
+    BOOST_REQUIRE_EQUAL(nftData.size(), 3u);
+    for (const UniValue& token : nftData.getValues()) {
+        BOOST_CHECK_EQUAL(find_value(token, "owner").get_str(), B);
+        BOOST_CHECK_EQUAL(find_value(token, "holderdata").get_str(), "bob's");
+    }
+
+    // Arbitrary data.
+    BOOST_CHECK_EQUAL(find_value(sendAndMine("omni_sendanydata", {UniValue(A), UniValue("68656c6c6f")}), "data").get_str(), "68656c6c6f");
+
+    SetWalletNode(nullptr);
+}
+
 BOOST_AUTO_TEST_SUITE_END()

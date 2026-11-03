@@ -217,6 +217,15 @@ Nach jeder Phase: Build und Unit-Tests unter Linux grün, Commit, Push. Der Abgl
   Byte-Offset aus dem txindex) ist hier die Position im Block, von der Node gelesen. Dabei gefunden und
   behoben: Bool-Parameter an die Node gingen als Zahl raus (`getblockheader <hash> 1` statt `true`, ein
   echter `litecoind` lehnt das ab).
+- **Stand Phase 8:** getestet, keine Änderung am Code nötig. Ein Ende-zu-Ende-Test schickt jeden Aufruf
+  über die API, lässt die simulierte Node-Wallet senden, setzt die Tx in einen Block und prüft, was
+  OmniLite daraus macht: Managed Property, Grant (an andere und an sich selbst), Revoke, Grants-Liste,
+  Freezing an, Freeze, Unfreeze, Freezing aus, Send-to-Owners (Gebühr in OMNI), Crowdsale mit Teilnahme
+  und vorzeitigem Schließen, Issuer-Wechsel, `omni_sendall`, NFT-Issuance, `omni_sendnonfungible`,
+  `omni_setnonfungibledata` (Holder-Daten), `omni_sendanydata`. Ein Grant von einem Nicht-Issuer wird
+  vor dem Senden abgelehnt. Freezing wirkt sofort: die Wartezeit gilt nur mit dem Feature
+  „Freeze-Notice“, das auch auf Mainnet nicht aktiv ist. Issuer-Daten für NFTs sind ebenfalls ein nicht
+  aktiviertes Feature und darum nicht getestet.
 
 ### Später
 - Snapshot-Export und -Import, Status-Aufruf (Höhe, Abstand zur Node, Reorgs), systemd-Unit.
