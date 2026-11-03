@@ -724,30 +724,22 @@ static UniValue omni_getallbalancesforaddress(const JSONRPCRequest& request)
 /** Returns all addresses that may be mine. */
 static std::set<std::string> getWalletAddresses(const JSONRPCRequest& request, bool fIncludeWatchOnly)
 {
-#ifdef ENABLE_WALLET
     std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
     CWallet* const pwallet = wallet.get();
-#endif
 
     std::set<std::string> result;
 
-#ifdef ENABLE_WALLET
-    LOCK(pwallet->cs_wallet);
-
-    for(const auto& item : pwallet->mapAddressBook) {
-        const CTxDestination& address = item.first;
-        isminetype iIsMine = IsMine(*pwallet, address);
-
-        if (iIsMine == ISMINE_SPENDABLE || (fIncludeWatchOnly && iIsMine != ISMINE_NO)) {
-            result.insert(EncodeDestination(address));
+    // omnilite-standalone: the node's wallet lists its addresses, with the same filter
+    if (pwallet) {
+        for (const std::string& address : pwallet->ListAddresses(fIncludeWatchOnly)) {
+            result.insert(address);
         }
     }
-#endif
 
     return result;
 }
 
-#ifdef ENABLE_WALLET
+// omnilite-standalone: the wallet calls without ENABLE_WALLET as well, over the node's wallet
 static UniValue omni_getwalletbalances(const JSONRPCRequest& request)
 {
     std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
@@ -948,7 +940,6 @@ static UniValue omni_getwalletaddressbalances(const JSONRPCRequest& request)
 
     return response;
 }
-#endif
 
 static UniValue omni_getproperty(const JSONRPCRequest& request)
 {
@@ -1624,12 +1615,9 @@ static UniValue omni_listblockstransactions(const JSONRPCRequest& request)
 
 static UniValue omni_gettransaction(const JSONRPCRequest& request)
 {
-#ifdef ENABLE_WALLET
+    // omnilite-standalone: without ENABLE_WALLET as well; the node's wallet ("ismine")
     std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
     std::unique_ptr<interfaces::Wallet> pWallet = interfaces::MakeWallet(wallet);
-#else
-    std::unique_ptr<interfaces::Wallet> pWallet;
-#endif
 
     if (request.fHelp || request.params.size() != 1)
         throw runtime_error(
@@ -1670,7 +1658,7 @@ static UniValue omni_gettransaction(const JSONRPCRequest& request)
     return txobj;
 }
 
-#ifdef ENABLE_WALLET
+// omnilite-standalone: without ENABLE_WALLET as well, over the node's wallet
 static UniValue omni_listtransactions(const JSONRPCRequest& request)
 {
     std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
@@ -1730,6 +1718,9 @@ static UniValue omni_listtransactions(const JSONRPCRequest& request)
     if (request.params.size() > 4) nEndBlock = request.params[4].get_int64();
     if (nEndBlock < 0) throw JSONRPCError(RPC_INVALID_PARAMETER, "Negative end block");
 
+    // omnilite-standalone: no node to ask, no wallet
+    if (!pWallet) return UniValue(UniValue::VARR);
+
     // obtain a sorted list of Omni layer wallet transactions (including STO receipts and pending)
     std::map<std::string,uint256> walletTransactions = FetchWalletOmniTransactions(*pWallet, nFrom+nCount, nStartBlock, nEndBlock);
 
@@ -1750,16 +1741,12 @@ static UniValue omni_listtransactions(const JSONRPCRequest& request)
 
     return response;
 }
-#endif
 
 static UniValue omni_listpendingtransactions(const JSONRPCRequest& request)
 {
-#ifdef ENABLE_WALLET
+    // omnilite-standalone: without ENABLE_WALLET as well; the node's wallet ("ismine")
     std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
     std::unique_ptr<interfaces::Wallet> pWallet = interfaces::MakeWallet(wallet);
-#else
-    std::unique_ptr<interfaces::Wallet> pWallet;
-#endif
 
     if (request.fHelp || request.params.size() > 1)
         throw runtime_error(
@@ -1968,12 +1955,9 @@ static UniValue omni_getactivations(const JSONRPCRequest& request)
 
 static UniValue omni_getsto(const JSONRPCRequest& request)
 {
-#ifdef ENABLE_WALLET
+    // omnilite-standalone: without ENABLE_WALLET as well; the node's wallet ("ismine")
     std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
     std::unique_ptr<interfaces::Wallet> pWallet = interfaces::MakeWallet(wallet);
-#else
-    std::unique_ptr<interfaces::Wallet> pWallet;
-#endif
 
     if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
         throw runtime_error(
@@ -2130,13 +2114,11 @@ static const CRPCCommand commands[] =
     { "omni layer (data retrieval)", "omni_getnonfungibletokens",      &omni_getnonfungibletokens,       {"address", "propertyid"} },
     { "omni layer (data retrieval)", "omni_getnonfungibletokendata",   &omni_getnonfungibletokendata,    {"propertyid", "tokenidstart", "tokenidend"} },
     { "omni layer (data retrieval)", "omni_getnonfungibletokenranges", &omni_getnonfungibletokenranges,  {"propertyid"} },
-    // omnilite-standalone: omni_setautocommit outside ENABLE_WALLET
+    // omnilite-standalone: omni_setautocommit and the wallet calls outside ENABLE_WALLET
     { "omni layer (configuration)",  "omni_setautocommit",             &omni_setautocommit,              {"flag"}  },
-#ifdef ENABLE_WALLET
     { "omni layer (data retrieval)", "omni_listtransactions",          &omni_listtransactions,           {"address", "count", "skip", "startblock", "endblock"} },
     { "omni layer (data retrieval)", "omni_getwalletbalances",         &omni_getwalletbalances,          {"includewatchonly"} },
     { "omni layer (data retrieval)", "omni_getwalletaddressbalances",  &omni_getwalletaddressbalances,   {"includewatchonly"} },
-#endif
     { "hidden",                      "mscrpc",                         &mscrpc,                          {"extra", "extra2", "extra3"}  },
 };
 

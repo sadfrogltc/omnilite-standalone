@@ -160,6 +160,7 @@ std::unique_ptr<TxIndex> g_txindex = std::make_unique<TxIndex>();
 
 std::function<bool(const CBlockIndex*, CBlock&)> g_readBlock;
 std::function<bool(const uint256&, CTransactionRef&, uint256&)> g_getTransaction;
+std::function<std::vector<CTransactionRef>(const uint256&)> g_blockTxs;
 
 bool ReadBlockFromDisk(CBlock& block, const CBlockIndex* pindex, const Consensus::Params&)
 {
@@ -169,6 +170,23 @@ bool ReadBlockFromDisk(CBlock& block, const CBlockIndex* pindex, const Consensus
 bool GetTransaction(const uint256& hash, CTransactionRef& tx, const Consensus::Params&, uint256& hashBlock, const CBlockIndex* const)
 {
     return g_getTransaction && g_getTransaction(hash, tx, hashBlock);
+}
+
+unsigned int TxIndex::ReadTxPos(const uint256& txid) const
+{
+    CTransactionRef tx;
+    uint256 hashBlock;
+    if (!g_getTransaction || !g_blockTxs || !g_getTransaction(txid, tx, hashBlock) || hashBlock.IsNull()) return 0;
+    std::vector<CTransactionRef> txs;
+    try {
+        txs = g_blockTxs(hashBlock);
+    } catch (const std::exception&) {
+        return 0; // only the order of wallet transactions in one block suffers
+    }
+    for (size_t i = 0; i < txs.size(); ++i) {
+        if (txs[i] && txs[i]->GetHash() == txid) return i;
+    }
+    return 0;
 }
 
 // --- shutdown.h, ui_interface.h, txmempool.h, core_io.h ---

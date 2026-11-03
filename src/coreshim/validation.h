@@ -52,5 +52,8 @@ bool NodeAborted();
 /** How ReadBlockFromDisk and GetTransaction reach the node; set by the indexer. */
 extern std::function<bool(const CBlockIndex*, CBlock&)> g_readBlock;
 extern std::function<bool(const uint256&, CTransactionRef&, uint256&)> g_getTransaction;
+/** A block's transactions from the node, for TxIndex::ReadTxPos; unlike
+ *  g_readBlock without the replay of OmniLite (its cache stays as it is). */
+extern std::function<std::vector<CTransactionRef>(const uint256&)> g_blockTxs;
 
 #endif // OMNILITE_STANDALONE_CORESHIM_VALIDATION_H

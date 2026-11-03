@@ -52,7 +52,7 @@ BlockHeader RPCChainSource::GetBlockHeader(const std::string& hash)
 {
     UniValue params(UniValue::VARR);
     params.push_back(hash);
-    params.push_back(true);
+    params.push_back(UniValue(true));
     UniValue r = CallNode([&] { return m_node.Call("getblockheader", params); });
     BlockHeader h;
     h.hash = find_value(r, "hash").get_str();

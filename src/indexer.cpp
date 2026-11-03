@@ -74,7 +74,7 @@ bool RPCNodeData::GetTx(const uint256& txid, CTransactionRef& tx, uint256& block
 {
     UniValue params(UniValue::VARR);
     params.push_back(txid.GetHex());
-    params.push_back(true);
+    params.push_back(UniValue(true));
     UniValue r;
     try {
         r = m_node.Call("getrawtransaction", params);
@@ -113,6 +113,7 @@ OmniIndexer::~OmniIndexer()
 {
     g_readBlock = nullptr;
     g_getTransaction = nullptr;
+    g_blockTxs = nullptr;
     if (m_started) mastercore_shutdown();
     LOCK(cs_main);
     chainActive.SetTip(nullptr);
@@ -145,6 +146,7 @@ void OmniIndexer::Start(const fs::path& dataDir, const OmniOptions& options)
 
     g_readBlock = [this](const CBlockIndex* pindex, CBlock& block) { return ReadBlock(pindex, block.vtx); };
     g_getTransaction = [this](const uint256& txid, CTransactionRef& tx, uint256& blockHash) { return GetTransaction(txid, tx, blockHash); };
+    g_blockTxs = [this](const uint256& blockHash) { return m_node.GetBlockTxs(blockHash.GetHex()); };
 
     // The active chain is what the store holds: OmniLite's state belongs to it.
     {

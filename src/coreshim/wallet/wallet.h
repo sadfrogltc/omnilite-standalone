@@ -51,8 +51,25 @@ public:
 
     /** Spendable, trusted outputs of an address (listunspent), in the node's order. */
     std::vector<NodeCoin> ListCoins(const std::string& address) const;
-    /** Whether the node's wallet has the key of the destination (getaddressinfo). */
+    /**
+     * Whether the node's wallet has the key of the destination (getaddressinfo),
+     * asked once per address and request. ISMINE_NO where the node has no such
+     * wallet: OmniLite shows "ismine" in every transaction object, those calls
+     * must not fail over it.
+     */
     isminetype IsMine(const CTxDestination& dest) const;
+    /**
+     * The wallet's addresses, as its address book in Core (listreceivedbyaddress
+     * with empty ones): spendable ones, and watch-only ones if asked.
+     */
+    std::vector<std::string> ListAddresses(bool includeWatchOnly) const;
+    /** A transaction of the node's wallet; blockHash null while unconfirmed. */
+    struct Tx {
+        uint256 txid;
+        uint256 blockHash;
+    };
+    /** The wallet's transactions, oldest first (listtransactions, watch-only included). */
+    std::vector<Tx> ListTransactions() const;
     /** The public key of a wallet address; false if the wallet has none. */
     bool GetPubKey(const std::string& address, CPubKey& pubKey) const;
     /**
@@ -72,12 +89,17 @@ public:
 private:
     /** GetFeeRate, asked once per request. */
     mutable CAmount m_feePerKb = -1;
+    /** IsMine by address, for this request. */
+    mutable std::map<std::string, isminetype> m_isMine;
     std::string m_name;
     RPCClient m_client;
 };
 
 /** The node to send through; null: no wallet (as -disablewallet). Set at start-up. */
 void SetWalletNode(const RPCClient* node);
+
+/** Whether there is a node to ask for wallets. */
+bool HasWallets();
 
 /**
  * The wallet a request is for: the one in its URI (/wallet/<name>, as

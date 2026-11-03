@@ -1,6 +1,6 @@
 // omnilite-standalone: stands in for Litecoin Core's interfaces/wallet.h, with
-// the part OmniLite's sending code (rpctx.cpp) uses, over the node's wallet
-// (src/nodewallet.cpp). Elsewhere OmniLite passes a null pointer around.
+// the part OmniLite's sending code (rpctx.cpp) and its wallet listing
+// (walletfetchtxs.cpp) use, over the node's wallet (src/nodewallet.cpp).
 
 #ifndef OMNILITE_STANDALONE_CORESHIM_INTERFACES_WALLET_H
 #define OMNILITE_STANDALONE_CORESHIM_INTERFACES_WALLET_H
@@ -40,6 +40,22 @@ public:
         std::string& reject_reason) = 0;
 };
 
+//! Not as in Core: the transaction is only known by its hash, which is all
+//! OmniLite's wallet listing (walletfetchtxs.cpp) asks of it.
+struct WalletTxHash
+{
+    uint256 hash;
+    const uint256& GetHash() const { return hash; }
+};
+
+//! Information about one wallet transaction.
+struct WalletTx
+{
+    std::shared_ptr<const WalletTxHash> tx;
+    uint256 hash_block;
+    int64_t order_pos;
+};
+
 class Wallet
 {
 public:
@@ -48,6 +64,9 @@ public:
 
     //! Return whether wallet has private key.
     isminetype isMine(const CTxDestination& dest);
+
+    //! Get list of all wallet transactions.
+    std::vector<WalletTx> getWalletTxs();
 
     //! Create transaction. Only the inputs selected in coin_control are
     //! used; change goes to coin_control.destChange, before the last output.

@@ -20,9 +20,8 @@
 #include <sync.h>
 #include <tinyformat.h>
 #include <index/txindex.h>
-#ifdef ENABLE_WALLET
+// omnilite-standalone: without ENABLE_WALLET as well; the node's wallet
 #include <wallet/wallet.h>
-#endif
 
 #include <boost/algorithm/string.hpp>
 
@@ -58,7 +57,7 @@ static unsigned int GetTransactionByteOffset(const uint256& txid)
 std::map<std::string, uint256> FetchWalletOmniTransactions(interfaces::Wallet& iWallet, unsigned int count, int startBlock, int endBlock)
 {
     std::map<std::string, uint256> mapResponse;
-#ifdef ENABLE_WALLET
+    // omnilite-standalone: without ENABLE_WALLET as well
     if (!HasWallets()) {
         return mapResponse;
     }
@@ -131,7 +130,6 @@ std::map<std::string, uint256> FetchWalletOmniTransactions(interfaces::Wallet& i
         std::string sortKey = strprintf("%06d%010d", blockHeight, blockPosition);
         mapResponse.insert(std::make_pair(sortKey, txHash));
     }
-#endif
     return mapResponse;
 }
 

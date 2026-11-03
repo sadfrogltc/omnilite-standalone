@@ -355,10 +355,15 @@ struct FakeWallet {
     std::mutex mutex;
     std::vector<NodeCoin> coins;
     std::set<std::string> mine;
+    std::set<std::string> watchOnly;
+    /** The wallet's transactions, oldest first, with their block (null: unconfirmed). */
+    std::vector<std::pair<uint256, uint256>> history;
     std::vector<CTransactionRef> sent;
     std::vector<std::string> uris;
     int signs = 0;
     bool locked = false;
+    /** As a node without the wallet asked for. */
+    bool noWallet = false;
 
     static UniValue Error(int code, const std::string& message)
     {
@@ -372,7 +377,37 @@ struct FakeWallet {
     {
         std::lock_guard<std::mutex> lock(mutex);
         uris.push_back(uri);
-        if (method == "listunspent") {
+        if (noWallet) {
+            error = Error(RPC_WALLET_NOT_FOUND, "Requested wallet does not exist or is not loaded");
+            return true;
+        }
+        if (method == "listreceivedbyaddress") {
+            result = UniValue(UniValue::VARR);
+            for (const std::string& a : mine) {
+                UniValue r(UniValue::VOBJ);
+                r.pushKV("address", a);
+                result.push_back(r);
+            }
+            if (params[2].isTrue()) {
+                for (const std::string& a : watchOnly) {
+                    UniValue r(UniValue::VOBJ);
+                    r.pushKV("involvesWatchonly", true);
+                    r.pushKV("address", a);
+                    result.push_back(r);
+                }
+            }
+        } else if (method == "listtransactions") {
+            // As the node: one entry per output, so a transaction may come twice.
+            result = UniValue(UniValue::VARR);
+            for (const auto& h : history) {
+                for (int i = 0; i < 2; ++i) {
+                    UniValue e(UniValue::VOBJ);
+                    e.pushKV("txid", h.first.GetHex());
+                    if (!h.second.IsNull()) e.pushKV("blockhash", h.second.GetHex());
+                    result.push_back(e);
+                }
+            }
+        } else if (method == "listunspent") {
             result = UniValue(UniValue::VARR);
             const std::string address = params[2][0].get_str();
             for (const NodeCoin& c : coins) {
@@ -403,6 +438,7 @@ struct FakeWallet {
         } else if (method == "getaddressinfo") {
             result = UniValue(UniValue::VOBJ);
             result.pushKV("ismine", mine.count(params[0].get_str()) > 0);
+            result.pushKV("iswatchonly", watchOnly.count(params[0].get_str()) > 0);
             result.pushKV("pubkey", "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798");
         } else if (method == "signrawtransactionwithwallet") {
             if (locked) {
@@ -603,6 +639,100 @@ BOOST_AUTO_TEST_CASE(send_through_the_node_wallet)
 
     node.mempoolTxs.clear();
     MempoolWatcher(node).Refresh();
+}
+
+BOOST_AUTO_TEST_CASE(wallet_calls_through_the_node_wallet)
+{
+    const CScript dave = ScriptFor(0xd4);
+    std::vector<unsigned char> issue = CreatePayload_IssuanceFixed(1, MSC_PROPERTY_TYPE_DIVISIBLE, 0, "Games", "", "Coin", "", "", 1000 * COIN);
+    CTransactionRef issueTx = node.OmniTx(alice, issue);
+    Connect("w1", start, {issueTx});
+    // Two of the wallet's transactions in one block.
+    CTransactionRef toBob = node.OmniTx(alice, CreatePayload_SimpleSend(3, 400 * COIN), &bob);
+    CTransactionRef toCarol = node.OmniTx(alice, CreatePayload_SimpleSend(3, 50 * COIN), &carol);
+    Connect("w2", start + 1, {toBob, toCarol});
+    // None of the wallet's addresses involved.
+    CTransactionRef carolToDave = node.OmniTx(carol, CreatePayload_SimpleSend(3, 10 * COIN), &dave);
+    Connect("w3", start + 2, {carolToDave});
+
+    // alice is the wallet's, bob watch-only. Its history also has a plain payment.
+    FakeWallet wallet;
+    wallet.mine.insert(AddressOf(alice));
+    wallet.watchOnly.insert(AddressOf(bob));
+    const COutPoint payment = node.Fund(alice, 1 * COIN);
+    for (const CTransactionRef& tx : {issueTx, toBob, toCarol}) wallet.history.push_back({tx->GetHash(), node.txBlock[tx->GetHash()]});
+    wallet.history.push_back({payment.hash, uint256()});
+    FakeLitecoind litecoind;
+    litecoind.handler = [&](const std::string& m, const UniValue& p, const std::string& u, UniValue& r, UniValue& e) { return wallet.Handle(m, p, u, r, e); };
+    RPCClient nodeRPC("127.0.0.1", litecoind.port, "user", "pass", 10);
+
+    RegisterOmniRPCCommands();
+    if (RPCIsInWarmup(nullptr)) SetRPCWarmupFinished();
+    SetWalletNode(&nodeRPC);
+    APIOptions options;
+    options.user = "u";
+    options.password = "p";
+    APIServer api(options, &nodeRPC);
+    api.Start();
+    RPCClient client("127.0.0.1", api.Port(), "u", "p", 10);
+    auto call = [&](const RPCClient& c, const std::string& method, std::vector<UniValue> args) {
+        UniValue params(UniValue::VARR);
+        for (const UniValue& a : args) params.push_back(a);
+        return c.Call(method, params);
+    };
+    auto txids = [](const UniValue& list) {
+        std::vector<std::string> ids;
+        for (const UniValue& tx : list.getValues()) ids.push_back(find_value(tx, "txid").get_str());
+        return ids;
+    };
+
+    // omni_listtransactions: the wallet's Omni transactions, newest first, in
+    // block order within a block; the plain payment and carol's send are not there.
+    UniValue list = call(client, "omni_listtransactions", {});
+    std::vector<std::string> expected{toCarol->GetHash().GetHex(), toBob->GetHash().GetHex(), issueTx->GetHash().GetHex()};
+    BOOST_CHECK(txids(list) == expected);
+    for (const UniValue& tx : list.getValues()) BOOST_CHECK(find_value(tx, "ismine").isTrue());
+    BOOST_CHECK_EQUAL(find_value(list[0], "amount").get_str(), "50.00000000");
+
+    // count, skip and the address filter as in OmniLite.
+    BOOST_CHECK(txids(call(client, "omni_listtransactions", {UniValue("*"), UniValue(1)})) == std::vector<std::string>{toCarol->GetHash().GetHex()});
+    BOOST_CHECK(txids(call(client, "omni_listtransactions", {UniValue("*"), UniValue(1), UniValue(1)})) == std::vector<std::string>{toBob->GetHash().GetHex()});
+    // Ordering within a block asks the node for the block; that leaves no trace in later answers.
+    BOOST_CHECK_EQUAL(find_value(call(client, "omni_gettransaction", {UniValue(issueTx->GetHash().GetHex())}), "confirmations").get_int(), 3);
+    BOOST_CHECK(txids(call(client, "omni_listtransactions", {UniValue(AddressOf(bob))})) == std::vector<std::string>{toBob->GetHash().GetHex()});
+
+    // "ismine" in other calls: from the wallet's addresses only.
+    BOOST_CHECK(find_value(call(client, "omni_gettransaction", {UniValue(toBob->GetHash().GetHex())}), "ismine").isTrue());
+    BOOST_CHECK(find_value(call(client, "omni_gettransaction", {UniValue(carolToDave->GetHash().GetHex())}), "ismine").isFalse());
+
+    // Balances: alice has 550 left; with watch-only, bob's 400 count too.
+    UniValue balances = call(client, "omni_getwalletbalances", {});
+    BOOST_REQUIRE_EQUAL(balances.size(), 1u);
+    BOOST_CHECK_EQUAL(find_value(balances[0], "propertyid").get_int(), 3);
+    BOOST_CHECK_EQUAL(find_value(balances[0], "balance").get_str(), "550.00000000");
+    UniValue withWatchOnly;
+    withWatchOnly.setBool(true);
+    BOOST_CHECK_EQUAL(find_value(call(client, "omni_getwalletbalances", {withWatchOnly})[0], "balance").get_str(), "950.00000000");
+
+    UniValue byAddress = call(client, "omni_getwalletaddressbalances", {});
+    BOOST_REQUIRE_EQUAL(byAddress.size(), 1u);
+    BOOST_CHECK_EQUAL(find_value(byAddress[0], "address").get_str(), AddressOf(alice));
+    BOOST_CHECK_EQUAL(call(client, "omni_getwalletaddressbalances", {withWatchOnly}).size(), 2u);
+
+    // The wallet in the URI is the one asked.
+    wallet.uris.clear();
+    call(client.ForWallet("w1"), "omni_getwalletbalances", {});
+    BOOST_CHECK(!wallet.uris.empty());
+    BOOST_CHECK(std::count(wallet.uris.begin(), wallet.uris.end(), "/wallet/w1") == static_cast<long>(wallet.uris.size()));
+
+    // Without that wallet: the wallet calls report the node's error, the
+    // others work and nothing is "mine".
+    wallet.noWallet = true;
+    BOOST_CHECK_EXCEPTION(call(client, "omni_listtransactions", {}), RPCError,
+        [](const RPCError& e) { return e.code == RPC_WALLET_NOT_FOUND; });
+    BOOST_CHECK(find_value(call(client, "omni_gettransaction", {UniValue(toBob->GetHash().GetHex())}), "ismine").isFalse());
+
+    SetWalletNode(nullptr);
 }
 
 BOOST_AUTO_TEST_CASE(pending_transactions_from_the_mempool)

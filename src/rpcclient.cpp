@@ -185,7 +185,7 @@ TxIndexStatus GetTxIndexStatus(const RPCClient& node)
     }
     UniValue txParams(UniValue::VARR);
     txParams.push_back(txs[0].get_str());
-    txParams.push_back(false);
+    txParams.push_back(UniValue(false));
     try {
         node.Call("getrawtransaction", txParams);
     } catch (const RPCError& e) {

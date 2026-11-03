@@ -206,8 +206,17 @@ Nach jeder Phase: Build und Unit-Tests unter Linux grün, Commit, Push. Der Abgl
   Fehlercodes bleiben, mit Grund. Eine gesendete Tx ist sofort pending (Mempool, Marker-Cache,
   `PendingAdd`). Getestet mit einer simulierten Node-Wallet: Aufbau, Gebühr, Verbuchung durch OmniLite,
   Dry-Run, Wallet-Auswahl über die URI, gesperrte Wallet, fremde und zu kleine Outputs, Class B,
-  `omni_funded_send` mit Verbuchung, ohne Wallet. Noch offen: die lesenden Wallet-Aufrufe
-  (`omni_listtransactions`, `omni_getwalletbalances`, `omni_getwalletaddressbalances`, `ismine`).
+  `omni_funded_send` mit Verbuchung, ohne Wallet.
+- **Stand lesende Wallet-Aufrufe:** umgesetzt. `omni_listtransactions`, `omni_getwalletbalances` und
+  `omni_getwalletaddressbalances` laufen mit OmniLites Code; die Adressen der Wallet kommen aus
+  `listreceivedbyaddress` (wie Cores Adressbuch, Watch-only auf Wunsch), ihre Transaktionen aus
+  `listtransactions`. `ismine` in den Tx-Objekten (`omni_gettransaction`, `omni_listpendingtransactions`,
+  `omni_getsto`, `omni_decodetransaction`) fragt `getaddressinfo`, einmal je Adresse und Aufruf; ohne
+  passende Wallet auf der Node ist nichts „mine“ und der Aufruf funktioniert trotzdem, die Wallet-Aufrufe
+  selbst melden dann den Fehler der Node. Die Reihenfolge innerhalb eines Blocks (bei OmniLite der
+  Byte-Offset aus dem txindex) ist hier die Position im Block, von der Node gelesen. Dabei gefunden und
+  behoben: Bool-Parameter an die Node gingen als Zahl raus (`getblockheader <hash> 1` statt `true`, ein
+  echter `litecoind` lehnt das ab).
 
 ### Später
 - Snapshot-Export und -Import, Status-Aufruf (Höhe, Abstand zur Node, Reorgs), systemd-Unit.

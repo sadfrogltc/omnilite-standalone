@@ -12,8 +12,9 @@ class TxIndex
 public:
     bool BlockUntilSyncedToCurrentChain() const { return true; }
     /** OmniLite's addition: the byte offset of a transaction in its block,
-     *  used to order wallet transactions. Not known here. */
-    unsigned int ReadTxPos(const class uint256&) const { return 0; }
+     *  used to order wallet transactions. Here its index in the block, which
+     *  orders the same; 0 if the node does not know it in a block. */
+    unsigned int ReadTxPos(const class uint256& txid) const;
 };
 
 extern std::unique_ptr<TxIndex> g_txindex;

@@ -132,12 +132,11 @@ bool CheckInput(const CTxOut& txOut, int nHeight, CTxDestination& dest)
  */
 int IsMyAddress(const std::string& address, interfaces::Wallet* iWallet)
 {
-#ifdef ENABLE_WALLET
+    // omnilite-standalone: without ENABLE_WALLET as well; asks the node's wallet
     if (iWallet) {
         CTxDestination destination = DecodeDestination(address);
         return static_cast<int>(iWallet->isMine(destination));
     }
-#endif
     return 0;
 }
 

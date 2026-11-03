@@ -30,12 +30,9 @@ using mastercore::view;
 
 static UniValue omni_decodetransaction(const JSONRPCRequest& request)
 {
-#ifdef ENABLE_WALLET
+    // omnilite-standalone: without ENABLE_WALLET as well; the node's wallet ("ismine")
     std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
     std::unique_ptr<interfaces::Wallet> pWallet = interfaces::MakeWallet(wallet);
-#else
-    std::unique_ptr<interfaces::Wallet> pWallet;
-#endif
 
     if (request.fHelp || request.params.size() < 1 || request.params.size() > 3)
         throw std::runtime_error(

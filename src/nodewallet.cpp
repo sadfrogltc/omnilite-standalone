@@ -2,8 +2,9 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-// Sending through the node's wallet. OmniLite's send calls (rpctx.cpp) stay
-// as they are; what they ask of Litecoin Core's wallet is answered here over
+// The node's wallet for OmniLite: sending, and the wallet calls that only read
+// (omni_listtransactions, omni_getwallet*balances, "ismine"). OmniLite's
+// calls (rpctx.cpp, rpc.cpp) stay as they are; what they ask of Litecoin Core's wallet is answered here over
 // RPC: the stand-ins of wallet/wallet.h, wallet/coincontrol.h and
 // interfaces/wallet.h, OmniLite's coin selection (walletutils.cpp) and its
 // transaction builder (wallettxbuilder.cpp). Inputs only ever come from the
@@ -39,6 +40,8 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <limits>
+#include <set>
 
 namespace {
 
@@ -92,6 +95,11 @@ private:
 void SetWalletNode(const RPCClient* node)
 {
     g_walletNode = node;
+}
+
+bool HasWallets()
+{
+    return g_walletNode != nullptr;
 }
 
 std::shared_ptr<CWallet> GetWalletForJSONRPCRequest(const JSONRPCRequest& request)
@@ -166,10 +174,59 @@ UniValue AddressInfo(const CWallet& wallet, const std::string& address)
 isminetype CWallet::IsMine(const CTxDestination& dest) const
 {
     if (!IsValidDestination(dest)) return ISMINE_NO;
-    UniValue info = AddressInfo(*this, EncodeDestination(dest));
-    if (find_value(info, "ismine").isTrue()) return ISMINE_SPENDABLE;
-    if (find_value(info, "iswatchonly").isTrue()) return ISMINE_WATCH_ONLY;
-    return ISMINE_NO;
+    const std::string address = EncodeDestination(dest);
+    auto cached = m_isMine.find(address);
+    if (cached != m_isMine.end()) return cached->second;
+    isminetype result = ISMINE_NO;
+    try {
+        UniValue info = AddressInfo(*this, address);
+        if (find_value(info, "ismine").isTrue()) result = ISMINE_SPENDABLE;
+        else if (find_value(info, "iswatchonly").isTrue()) result = ISMINE_WATCH_ONLY;
+    } catch (const UniValue& e) {
+        // No such wallet, none loaded, or several and none named: as Core,
+        // where OmniLite then has no wallet and nothing is "mine".
+        const int code = find_value(e, "code").get_int();
+        if (code != RPC_WALLET_NOT_FOUND && code != RPC_WALLET_NOT_SPECIFIED && code != RPC_METHOD_NOT_FOUND) throw;
+    }
+    m_isMine[address] = result;
+    return result;
+}
+
+std::vector<std::string> CWallet::ListAddresses(bool includeWatchOnly) const
+{
+    UniValue params(UniValue::VARR);
+    params.push_back(0);
+    params.push_back(UniValue(true)); // with addresses that never received anything
+    params.push_back(UniValue(includeWatchOnly));
+    std::vector<std::string> addresses;
+    const UniValue received = Call("listreceivedbyaddress", params);
+    for (const UniValue& r : received.getValues()) {
+        if (!includeWatchOnly && find_value(r, "involvesWatchonly").isTrue()) continue;
+        addresses.push_back(find_value(r, "address").get_str());
+    }
+    return addresses;
+}
+
+std::vector<CWallet::Tx> CWallet::ListTransactions() const
+{
+    UniValue params(UniValue::VARR);
+    params.push_back("*");
+    params.push_back(std::numeric_limits<int>::max());
+    params.push_back(0);
+    params.push_back(UniValue(true)); // watch-only, as OmniLite lists them
+    std::vector<Tx> txs;
+    std::set<uint256> seen;
+    const UniValue entries = Call("listtransactions", params);
+    for (const UniValue& e : entries.getValues()) {
+        // One entry per output and category; the first gives the order.
+        Tx tx;
+        tx.txid = uint256S(find_value(e, "txid").get_str());
+        if (!seen.insert(tx.txid).second) continue;
+        const UniValue block = find_value(e, "blockhash");
+        if (block.isStr()) tx.blockHash = uint256S(block.get_str());
+        txs.push_back(tx);
+    }
+    return txs;
 }
 
 bool CWallet::GetPubKey(const std::string& address, CPubKey& pubKey) const
@@ -258,6 +315,16 @@ namespace interfaces {
 isminetype Wallet::isMine(const CTxDestination& dest)
 {
     return m_wallet->IsMine(dest);
+}
+
+std::vector<WalletTx> Wallet::getWalletTxs()
+{
+    std::vector<WalletTx> result;
+    int64_t pos = 0;
+    for (const CWallet::Tx& tx : m_wallet->ListTransactions()) {
+        result.push_back(WalletTx{std::make_shared<WalletTxHash>(WalletTxHash{tx.txid}), tx.blockHash, pos++});
+    }
+    return result;
 }
 
 std::unique_ptr<PendingWalletTx> Wallet::createTransaction(const std::vector<CRecipient>& recipients,
