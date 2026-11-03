@@ -4,9 +4,9 @@ Eigenständiger OmniLite-Indexer, der gegen jeden aktuellen `litecoind` läuft, 
 gepatchten Litecoin Core gebunden zu sein. Einzelanwender sollen damit auch Omni-Transaktionen senden
 können, über die Wallet ihres `litecoind`. Details und Phasen: [Plan.md](Plan.md).
 
-**Stand:** Phase 0 bis 3. Der Indexer folgt der Chain ab dem Omni-Genesis-Block und lässt jeden Block
+**Stand:** Phase 0 bis 5. Der Indexer folgt der Chain ab dem Omni-Genesis-Block und lässt jeden Block
 durch OmniLite 0.18.1 selbst laufen: alle Transaktionstypen, Guthaben, Properties, DEx, Crowdsales,
-NFTs, die Sicherung des States und Reorgs. Eine API gibt es noch nicht.
+NFTs, die Sicherung des States und Reorgs. Die API beantwortet die `omni_*`-Aufrufe wie `omnilitecored`.
 Noch nicht gegen einen echten `litecoind` getestet.
 
 ## Voraussetzungen (Linux)
@@ -31,7 +31,13 @@ Mit `-DOMNILITE_SANITIZE=ON` laufen Build und Tests mit AddressSanitizer und Und
 
 ```bash
 ./build/omnilite-standalone -check   # Verbindung, Chain und txindex prüfen
-./build/omnilite-standalone          # synchronisieren (Strg+C beendet)
+./build/omnilite-standalone          # synchronisieren und API starten (Strg+C beendet)
+```n
+Die API lauscht auf `127.0.0.1:9432` (Testnet 19432, Regtest 19543). Ohne `apipassword` liegt das Login
+im Cookie `~/.omnilite-standalone/<netz>/.cookie`, das z. B. `litecoin-cli` lesen kann:
+
+```bash
+litecoin-cli -rpcport=9432 -rpccookiefile=$HOME/.omnilite-standalone/main/.cookie omni_getinfo
 ```
 
 Konfiguration: `~/.omnilite-standalone/omnilite-standalone.conf`, Vorlage in

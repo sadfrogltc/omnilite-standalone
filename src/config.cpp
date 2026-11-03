@@ -21,7 +21,11 @@ const std::set<std::string> SETTINGS = {
     "network", "rpcconnect", "rpcport", "rpcuser", "rpcpassword", "rpccookiefile",
     "pollinterval", "undodepth",
     "omniactivationallowsender", "omnialertallowsender", "omnidebug",
+    "api", "apibind", "apiport", "apiuser", "apipassword",
 };
+
+/** The API listens 100 above the node's default port: 9432, test 19432, regtest 19543. */
+const int API_PORT_OFFSET = 100;
 
 std::string Trim(const std::string& s)
 {
@@ -66,6 +70,13 @@ int ParseInt(const std::string& key, const std::string& value, int min)
         throw ConfigError(key + ": want a whole number >= " + std::to_string(min) + ", got \"" + value + "\"");
     }
     return static_cast<int>(n);
+}
+
+bool ParseBool(const std::string& key, const std::string& value)
+{
+    if (value == "1" || value.empty()) return true; // -api alone switches it on
+    if (value == "0") return false;
+    throw ConfigError(key + ": want 0 or 1, got \"" + value + "\"");
 }
 
 /** Reads key=value lines. Returns false if the file does not exist. */
@@ -124,6 +135,11 @@ std::pair<std::string, std::string> Config::Credentials() const
         throw ConfigError("cookie file " + path + " has no user:password");
     }
     return {cookie.substr(0, colon), cookie.substr(colon + 1)};
+}
+
+std::string Config::APICookieFile() const
+{
+    return JoinPath(JoinPath(dataDir, Params().NetworkIDString()), ".cookie");
 }
 
 std::string DefaultDataDir()
@@ -194,6 +210,14 @@ Config LoadConfig(const std::vector<std::string>& args)
     cfg.activationAllowSenders = SplitList(values["omniactivationallowsender"]);
     cfg.alertAllowSenders = SplitList(values["omnialertallowsender"]);
     cfg.omniDebug = SplitList(values["omnidebug"]);
+    if (values.count("api")) cfg.api = ParseBool("api", values["api"]);
+    if (values.count("apibind") && !values["apibind"].empty()) cfg.apiBind = values["apibind"];
+    cfg.apiPort = Params().RPCPort() + API_PORT_OFFSET;
+    if (values.count("apiport")) cfg.apiPort = ParseInt("apiport", values["apiport"], 1);
+    if (cfg.apiPort > 65535) throw ConfigError("apiport: want at most 65535");
+    cfg.apiUser = values["apiuser"];
+    cfg.apiPassword = values["apipassword"];
+    if (!cfg.apiPassword.empty() && cfg.apiUser.empty()) throw ConfigError("apipassword is set but apiuser is not");
     return cfg;
 }
 
@@ -217,6 +241,11 @@ std::string HelpMessage()
       << "  -omniactivationallowsender=<a,b>  regtest only: extra senders of feature activations\n"
       << "  -omnialertallowsender=<a,b>       regtest only: extra senders of alerts\n"
       << "  -omnidebug=<a,b>    OmniLite debug categories, e.g. parser,tally or all\n"
+      << "  -api=<0|1>          answer omni_* calls over JSON-RPC (default: 1)\n"
+      << "  -apibind=<addr>     address the API listens on (default: 127.0.0.1)\n"
+      << "  -apiport=<port>     API port (default: 9432, test 19432, regtest 19543)\n"
+      << "  -apiuser=<user>     API user\n"
+      << "  -apipassword=<pw>   API password (default: a new cookie in <datadir>/<net>/.cookie)\n"
       << "\nEvery option except -check, -datadir and -conf can also be set in the config file.\n";
     return s.str();
 }

@@ -9,6 +9,7 @@
 
 #include <chainparams.h>
 #include <hash.h>
+#include <httprpc.h>
 #include <key_io.h>
 #include <omnicore/activation.h>
 #include <omnicore/createpayload.h>
@@ -20,6 +21,8 @@
 #include <omnicore/omnicore.h>
 #include <omnicore/rules.h>
 #include <omnicore/tally.h>
+#include <rpc/server.h>
+#include <rpcclient.h>
 #include <store.h>
 #include <test/omnicore/test_shim.h>
 #include <test/util.h>
@@ -70,6 +73,8 @@ class FakeNode : public NodeData
 public:
     std::map<std::string, std::vector<CTransactionRef>> blocks;
     std::map<uint256, CTransactionRef> txs;
+    /** The block of each transaction in one; unknown means unconfirmed. */
+    std::map<uint256, uint256> txBlock;
     bool unreachable = false;
 
     std::vector<CTransactionRef> GetBlockTxs(const std::string& hash) override
@@ -86,7 +91,8 @@ public:
         auto it = txs.find(txid);
         if (it == txs.end()) return false;
         tx = it->second;
-        blockHash = uint256();
+        auto bit = txBlock.find(txid);
+        blockHash = bit == txBlock.end() ? uint256() : bit->second;
         return true;
     }
 
@@ -159,7 +165,10 @@ struct Fixture : BasicTestingSetup {
     {
         BlockHeader h = Header(name, height);
         node.blocks[h.hash] = txs;
-        for (const auto& tx : txs) node.txs[tx->GetHash()] = tx;
+        for (const auto& tx : txs) {
+            node.txs[tx->GetHash()] = tx;
+            node.txBlock[tx->GetHash()] = uint256S(h.hash);
+        }
         std::unique_ptr<CBlockTx> btx = store->Begin({h.height, h.hash, h.prevHash, h.time});
         indexer->ConnectBlock(*btx, h);
         btx->Commit();
@@ -252,6 +261,63 @@ BOOST_AUTO_TEST_CASE(node_failure_before_processing_is_retryable)
     node.unreachable = false;
     Connect("e2", start + 1, {send});
     BOOST_CHECK_EQUAL(Balance(bob, 3), 20);
+}
+
+BOOST_AUTO_TEST_CASE(api_answers_from_the_state)
+{
+    std::vector<unsigned char> issue = CreatePayload_IssuanceFixed(1, MSC_PROPERTY_TYPE_DIVISIBLE, 0, "Games", "", "Coin", "", "", 1000 * COIN);
+    Connect("a1", start, {node.OmniTx(alice, issue)});
+    CTransactionRef send = node.OmniTx(alice, CreatePayload_SimpleSend(3, 400 * COIN), &bob);
+    Connect("a2", start + 1, {send});
+
+    RegisterOmniRPCCommands();
+    if (RPCIsInWarmup(nullptr)) SetRPCWarmupFinished();
+    APIOptions options;
+    options.user = "u";
+    options.password = "p";
+    APIServer api(options, nullptr);
+    api.Start();
+    RPCClient client("127.0.0.1", api.Port(), "u", "p", 10);
+    auto call = [&](const std::string& method, std::vector<UniValue> args) {
+        UniValue params(UniValue::VARR);
+        for (const UniValue& a : args) params.push_back(a);
+        return client.Call(method, params);
+    };
+
+    UniValue info = call("omni_getinfo", {});
+    BOOST_CHECK_EQUAL(find_value(info, "block").get_int64(), start + 1);
+
+    UniValue property = call("omni_getproperty", {UniValue(3)});
+    BOOST_CHECK_EQUAL(find_value(property, "name").get_str(), "Coin");
+    BOOST_CHECK_EQUAL(find_value(property, "issuer").get_str(), AddressOf(alice));
+    BOOST_CHECK(find_value(property, "divisible").isTrue());
+    BOOST_CHECK_EQUAL(find_value(property, "totaltokens").get_str(), "1000.00000000");
+
+    UniValue balance = call("omni_getbalance", {UniValue(AddressOf(bob)), UniValue(3)});
+    BOOST_CHECK_EQUAL(find_value(balance, "balance").get_str(), "400.00000000");
+
+    // The transaction comes from the node, its validity from OmniLite.
+    UniValue tx = call("omni_gettransaction", {UniValue(send->GetHash().GetHex())});
+    BOOST_CHECK(find_value(tx, "valid").isTrue());
+    BOOST_CHECK_EQUAL(find_value(tx, "block").get_int64(), start + 1);
+    BOOST_CHECK_EQUAL(find_value(tx, "confirmations").get_int(), 1);
+    BOOST_CHECK_EQUAL(find_value(tx, "sendingaddress").get_str(), AddressOf(alice));
+    BOOST_CHECK_EQUAL(find_value(tx, "referenceaddress").get_str(), AddressOf(bob));
+    BOOST_CHECK_EQUAL(find_value(tx, "amount").get_str(), "400.00000000");
+
+    UniValue blockTxs = call("omni_listblocktransactions", {UniValue(start + 1)});
+    BOOST_REQUIRE_EQUAL(blockTxs.size(), 1u);
+    BOOST_CHECK_EQUAL(blockTxs[0].get_str(), send->GetHash().GetHex());
+
+    // Unknown transactions get omnilitecored's error.
+    BOOST_CHECK_EXCEPTION(call("omni_gettransaction", {UniValue(uint256S("01").GetHex())}), RPCError,
+        [](const RPCError& e) { return e.code == RPC_INVALID_ADDRESS_OR_KEY; });
+
+    // Payloads use the property's divisibility; named arguments work.
+    UniValue named(UniValue::VOBJ);
+    named.pushKV("propertyid", 3);
+    named.pushKV("amount", "0.5");
+    BOOST_CHECK_EQUAL(client.Call("omni_createpayload_simplesend", named).get_str(), "00000000000000030000000002faf080");
 }
 
 BOOST_AUTO_TEST_SUITE_END()

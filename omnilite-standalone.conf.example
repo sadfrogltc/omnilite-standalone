@@ -28,3 +28,13 @@ rpcconnect=127.0.0.1
 # OmniLite debug categories (OmniLite's -omnidebug), comma-separated, e.g.
 # parser,tally or all. Turns on debug output in the log.
 #omnidebug=
+
+# JSON-RPC API with OmniLite's omni_* calls (1 = on).
+#api=1
+# Listen address. Anything but localhost exposes your Omni data to whoever can log in.
+#apibind=127.0.0.1
+# Default: 9432, test 19432, regtest 19543.
+#apiport=9432
+# Without apipassword a new cookie is written at start-up: <datadir>/<network>/.cookie
+#apiuser=
+#apipassword=

@@ -15,6 +15,7 @@ denen unter `src/` im Original. Lizenz: MIT, siehe `core/COPYING`, `core/univalu
 - Transaktionen, Script, Adressen: `primitives/transaction`, `script/script`, `script/standard`,
   `script/interpreter.h`, `script/script_error.h`, `pubkey`, `base58`, `bech32`, `key_io`
 - Gebühren: `policy/feerate` (für die Dust-Grenze)
+- RPC: `rpc/protocol` (Fehlercodes, Antwortformat), `rpc/util` (Hilfetexte von `RPCHelpMan`)
 - Bibliotheken: `univalue/` (include, lib), `secp256k1/` (include, src)
 
 Die Omni-Teile aus OmniLite liegen in `src/omnicore`; ihre Herkunft steht in `src/omnicore/ORIGIN.md`.
@@ -30,6 +31,9 @@ Jede Änderung ist im Code mit `omnilite-standalone:` markiert.
    (`DecodeSecret`, `EncodeSecret`, `DecodeExtKey`, `EncodeExtKey`, `DecodeExtPubKey`,
    `EncodeExtPubKey`) entfernt. Schlüssel verwaltet die Wallet des Nodes.
 2. `script/standard.cpp`: `#include <util/system.h>` entfernt; die Datei braucht nichts daraus.
+3. `rpc/util.h`, `rpc/util.cpp`: `AddrToPubKey`, `AddAndGetMultisigDestination`, `ParseConfirmTarget`,
+   `RPCErrorFromTransactionError`, `JSONRPCTransactionError` und `g_rpc_interfaces` entfernt (brauchen Keystore,
+   Gebührenschätzung oder Node-Schnittstellen).
 
 ## Build-Einstellungen
 

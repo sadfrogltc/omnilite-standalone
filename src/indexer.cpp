@@ -147,9 +147,18 @@ void OmniIndexer::Start(const fs::path& dataDir, const OmniOptions& options)
     try {
         mastercore_init();
     } catch (const NodeError& e) {
+        ClearBlockCaches();
         throw FatalError(std::string("loading the Omni state: ") + e.what());
     }
+    ClearBlockCaches();
     if (NodeAborted()) throw FatalError("OmniLite stopped while loading its state, see the log");
+}
+
+void OmniIndexer::ClearBlockCaches()
+{
+    m_blockTxs.clear();
+    m_replayTxs.clear();
+    m_prefetched.clear();
 }
 
 bool OmniIndexer::ReadBlock(const CBlockIndex* pindex, std::vector<CTransactionRef>& txs)
@@ -157,21 +166,24 @@ bool OmniIndexer::ReadBlock(const CBlockIndex* pindex, std::vector<CTransactionR
     // OmniLite replays blocks after a reorg or at start-up; the node must
     // answer, a missing block would leave the state incomplete.
     txs = m_node.GetBlockTxs(pindex->GetBlockHash().GetHex());
-    m_blockTxs.clear();
-    m_prefetched.clear();
+    m_replayTxs.clear();
     for (const CTransactionRef& tx : txs) {
-        if (tx) m_blockTxs[tx->GetHash()] = tx;
+        if (tx) m_replayTxs[tx->GetHash()] = tx;
     }
     return true;
 }
 
 bool OmniIndexer::GetTransaction(const uint256& txid, CTransactionRef& tx, uint256& blockHash)
 {
-    auto it = m_blockTxs.find(txid);
-    if (it != m_blockTxs.end()) {
-        tx = it->second;
-        blockHash = uint256(); // the block being processed
-        return true;
+    // The caches only hold something while a block is being processed;
+    // API calls in between go to the node.
+    for (const auto* txs : {&m_blockTxs, &m_replayTxs}) {
+        auto it = txs->find(txid);
+        if (it != txs->end()) {
+            tx = it->second;
+            blockHash = uint256(); // the block being processed
+            return true;
+        }
     }
     auto pit = m_prefetched.find(txid);
     if (pit != m_prefetched.end()) {
@@ -182,35 +194,45 @@ bool OmniIndexer::GetTransaction(const uint256& txid, CTransactionRef& tx, uint2
     return m_node.GetTx(txid, tx, blockHash);
 }
 
-void OmniIndexer::Prefetch(const std::vector<CTransactionRef>& txs, int64_t height)
+OmniIndexer::Prefetched OmniIndexer::Prefetch(const std::vector<CTransactionRef>& txs, const std::map<uint256, CTransactionRef>& blockTxs, int64_t height)
 {
+    Prefetched prefetched;
     for (const CTransactionRef& tx : txs) {
         if (!tx || tx->IsCoinBase()) continue;
         if (mastercore::GetEncodingClass(*tx, static_cast<int>(height)) == NO_MARKER) continue;
         for (const CTxIn& in : tx->vin) {
             const uint256& h = in.prevout.hash;
-            if (m_blockTxs.count(h) || m_prefetched.count(h)) continue;
+            if (blockTxs.count(h) || prefetched.count(h)) continue;
             CTransactionRef prev;
             uint256 blockHash;
             if (!m_node.GetTx(h, prev, blockHash)) prev = nullptr; // OmniLite then rejects the transaction (-101)
-            m_prefetched[h] = {prev, blockHash};
+            prefetched[h] = {prev, blockHash};
         }
     }
+    return prefetched;
 }
 
 void OmniIndexer::ConnectBlock(CBlockTx&, const BlockHeader& header)
 {
     // Everything that needs the node comes first: a failure here leaves the
-    // state untouched and the syncer retries.
+    // state untouched and the syncer retries. It runs without cs_main, so
+    // the API keeps answering meanwhile.
     std::vector<CTransactionRef> txs = m_node.GetBlockTxs(header.hash);
-    m_blockTxs.clear();
-    m_prefetched.clear();
+    std::map<uint256, CTransactionRef> blockTxs;
     for (const CTransactionRef& tx : txs) {
-        if (tx) m_blockTxs[tx->GetHash()] = tx;
+        if (tx) blockTxs[tx->GetHash()] = tx;
     }
-    Prefetch(txs, header.height);
+    Prefetched prefetched = Prefetch(txs, blockTxs, header.height);
 
     LOCK(cs_main);
+    ClearBlockCaches();
+    m_blockTxs.swap(blockTxs);
+    m_prefetched.swap(prefetched);
+    struct ClearOnExit {
+        OmniIndexer& self;
+        ~ClearOnExit() { self.ClearBlockCaches(); }
+    } clearOnExit{*this};
+
     CBlockIndex* tip = chainActive.Tip();
     if (tip && tip->GetBlockHash().GetHex() != header.prevHash) {
         throw FatalError("block " + header.hash + " does not extend OmniLite's chain tip " + tip->GetBlockHash().GetHex());

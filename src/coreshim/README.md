@@ -14,7 +14,10 @@ benutzt; die Umsetzung steht in `coreshim.cpp` und `policy.cpp`.
 | `util/system.h` | `gArgs` für die `-omni*`-Argumente, `GetDataDir`, `TryCreateDirectories`, `LogPrintf` |
 | `util/time.h`, `sync.h`, `fs.h` | Zeit, Locks (`std::recursive_mutex`), `std::filesystem` |
 | `ui_interface.h`, `txmempool.h`, `interfaces/wallet.h` | ohne Wirkung: keine GUI, keine eigene Wallet |
-| `clientversion.h`, `chainparamsbase.h`, `shutdown.h`, `init.h`, `core_io.h` | Konstanten und Kleinigkeiten |
+| `rpc/server.h`, `rpc/server.cpp` | Cores Befehlstabelle, Anfrage-Parsing, `help`/`stop`/`uptime`/`getrpcinfo` (Code aus Cores `rpc/server.cpp` ohne Timer und Signale); jeder Befehl läuft unter `cs_main` |
+| `index/txindex.h` | `g_txindex`: der Index ist der des Nodes, also immer synchron |
+| `wallet/rpcwallet.h`, `random.h` | leer bzw. `GetRandBytes` für das Cookie |
+| `clientversion.h`, `chainparamsbase.h`, `shutdown.h`, `init.h`, `core_io.h` | Konstanten und Kleinigkeiten; `core_io.h` mit `DecodeHexTx`/`EncodeHexTx` aus Core |
 
 Die Kette füllt der Indexer (`src/indexer.cpp`) aus den verarbeiteten Blöcken. `ReadBlockFromDisk`
 und `GetTransaction` fragen die Node per RPC; schlägt das mitten in einem Block fehl, bricht das

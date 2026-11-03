@@ -10,17 +10,23 @@
 
 #include <chain.h>
 #include <core_io.h>
+#include <index/txindex.h>
+#include <random.h>
 #include <shutdown.h>
+#include <streams.h>
 #include <txmempool.h>
 #include <ui_interface.h>
 #include <util/system.h>
 #include <util/strencodings.h>
 #include <util/time.h>
 #include <validation.h>
+#include <version.h>
 
 #include <atomic>
 #include <chrono>
 #include <ctime>
+#include <random>
+#include <thread>
 
 // --- util/system.h ---
 
@@ -71,6 +77,35 @@ bool TryCreateDirectories(const fs::path& p)
     return fs::create_directories(p);
 }
 
+fs::path AbsPathForConfigVal(const fs::path& path, bool)
+{
+    return fs::absolute(GetDataDir() / path);
+}
+
+bool RenameOver(fs::path src, fs::path dest)
+{
+    std::error_code ec;
+    fs::rename(src, dest, ec);
+    return !ec;
+}
+
+namespace {
+const int64_t g_startupTime = std::time(nullptr);
+} // namespace
+
+int64_t GetStartupTime()
+{
+    return g_startupTime;
+}
+
+// --- random.h ---
+
+void GetRandBytes(unsigned char* buf, int num)
+{
+    std::random_device rd; // /dev/urandom on Linux
+    for (int i = 0; i < num; ++i) buf[i] = static_cast<unsigned char>(rd());
+}
+
 // --- util/time.h ---
 
 int64_t GetTime()
@@ -86,6 +121,11 @@ int64_t GetTimeMillis()
 int64_t GetTimeMicros()
 {
     return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+void MilliSleep(int64_t n)
+{
+    std::this_thread::sleep_for(std::chrono::milliseconds(n));
 }
 
 std::string FormatISO8601DateTime(int64_t nTime)
@@ -116,6 +156,8 @@ CChain chainActive;
 BlockMap mapBlockIndex;
 std::atomic_bool fReindex(false);
 
+std::unique_ptr<TxIndex> g_txindex = std::make_unique<TxIndex>();
+
 std::function<bool(const CBlockIndex*, CBlock&)> g_readBlock;
 std::function<bool(const uint256&, CTransactionRef&, uint256&)> g_getTransaction;
 
@@ -138,6 +180,7 @@ std::atomic<bool> g_aborted{false};
 
 void StartShutdown() { g_shutdown = true; }
 bool ShutdownRequested() { return g_shutdown; }
+const std::atomic<bool>& ShutdownFlag() { return g_shutdown; }
 
 void DoAbortNode(const std::string& strMessage, const std::string& userMessage)
 {
@@ -159,4 +202,68 @@ CTxMemPool mempool;
 std::string ScriptToAsmStr(const CScript& script, const bool)
 {
     return HexStr(script.begin(), script.end());
+}
+
+// From Core's core_read.cpp.
+static bool CheckTxScriptsSanity(const CMutableTransaction& tx)
+{
+    // Check input scripts for non-coinbase txs
+    if (!CTransaction(tx).IsCoinBase()) {
+        for (unsigned int i = 0; i < tx.vin.size(); i++) {
+            if (!tx.vin[i].scriptSig.HasValidOps() || tx.vin[i].scriptSig.size() > MAX_SCRIPT_SIZE) {
+                return false;
+            }
+        }
+    }
+    // Check output scripts
+    for (unsigned int i = 0; i < tx.vout.size(); i++) {
+        if (!tx.vout[i].scriptPubKey.HasValidOps() || tx.vout[i].scriptPubKey.size() > MAX_SCRIPT_SIZE) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool DecodeHexTx(CMutableTransaction& tx, const std::string& hex_tx, bool try_no_witness, bool try_witness)
+{
+    if (!IsHex(hex_tx)) {
+        return false;
+    }
+
+    std::vector<unsigned char> txData(ParseHex(hex_tx));
+
+    if (try_no_witness) {
+        CDataStream ssData(txData, SER_NETWORK, PROTOCOL_VERSION | SERIALIZE_TRANSACTION_NO_WITNESS);
+        try {
+            ssData >> tx;
+            if (ssData.eof() && (!try_witness || CheckTxScriptsSanity(tx))) {
+                return true;
+            }
+        } catch (const std::exception&) {
+            // Fall through.
+        }
+    }
+
+    if (try_witness) {
+        CDataStream ssData(txData, SER_NETWORK, PROTOCOL_VERSION);
+        try {
+            ssData >> tx;
+            if (ssData.empty()) {
+                return true;
+            }
+        } catch (const std::exception&) {
+            // Fall through.
+        }
+    }
+
+    return false;
+}
+
+// From Core's core_write.cpp.
+std::string EncodeHexTx(const CTransaction& tx, const int serializeFlags)
+{
+    CDataStream ssTx(SER_NETWORK, PROTOCOL_VERSION | serializeFlags);
+    ssTx << tx;
+    return HexStr(ssTx.begin(), ssTx.end());
 }

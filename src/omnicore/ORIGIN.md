@@ -9,9 +9,9 @@ braucht (`cs_main`, `chainActive`, `gArgs`, Blockdateien, UI-Signale), liefern d
 ## Unverändert übernommen
 
 `activation`, `consensushash`, `convert`, `createpayload`, `dbbase`, `dbspinfo`, `dbstolist`,
-`dbtransaction`, `dbtxlist`, `dex`, `errors.h`, `notifications`, `omnicore`, `parse_string`, `pending`,
-`rpcmbstring`, `rules`, `script`, `sp`, `sto`, `tally`, `tx`, `uint256_extensions.h`, `utilsbitcoin`,
-`utilsui`, `version`, `walletcache`, `walletutils`.
+`createtx`, `dbtransaction`, `dbtxlist`, `dex`, `errors.h`, `notifications`, `omnicore`, `parse_string`,
+`pending`, `rpc`, `rpcmbstring`, `rpcpayload`, `rpcrawtx`, `rpcrequirements`, `rpctxobject`, `rpcvalues`, `rules`, `script`, `sp`, `sto`, `tally`, `tx`, `uint256_extensions.h`, `utilsbitcoin`,
+`utilsui`, `version`, `walletcache`, `walletfetchtxs`, `walletutils`.
 
 Das umfasst den kompletten Ablauf von OmniLite: `parseTransaction`, die Logik aller Transaktionstypen,
 die Handler für Blöcke und Transaktionen, die Sicherung des States in Dateien (`MP_persist`) und die

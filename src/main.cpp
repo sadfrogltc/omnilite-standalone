@@ -4,18 +4,22 @@
 
 #include <chainparams.h>
 #include <config.h>
+#include <fs.h>
+#include <httprpc.h>
 #include <indexer.h>
 #include <logging.h>
 #include <pubkey.h>
+#include <rpc/server.h>
 #include <rpcclient.h>
+#include <shutdown.h>
 #include <store.h>
 #include <syncer.h>
 
-#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -89,11 +93,9 @@ bool RunCheck(const Config& cfg)
     return ok;
 }
 
-std::atomic<bool> g_stop{false};
+void HandleSignal(int) { StartShutdown(); }
 
-void HandleSignal(int) { g_stop = true; }
-
-/** Syncs the index with the node until SIGINT or SIGTERM. */
+/** Syncs the index with the node and answers the API until SIGINT, SIGTERM or the stop call. */
 int Run(const Config& cfg)
 {
     struct sigaction sa {};
@@ -120,15 +122,39 @@ int Run(const Config& cfg)
         OmniIndexer processor(nodeData, store);
         // OmniLite logs at debug level; -omnidebug only makes sense if that is shown.
         if (!cfg.omniDebug.empty()) SetLogLevel(LogLevel::Debug);
+
+        // The API answers from the start; until OmniLite has loaded its
+        // state, omni_* calls get RPC_IN_WARMUP, as from omnilitecored.
+        std::unique_ptr<APIServer> api;
+        if (cfg.api) {
+            RegisterOmniRPCCommands();
+            SetRPCWarmupStatus("Loading the Omni state...");
+            APIOptions apiOptions;
+            apiOptions.bind = cfg.apiBind;
+            apiOptions.port = cfg.apiPort;
+            apiOptions.user = cfg.apiUser;
+            apiOptions.password = cfg.apiPassword;
+            apiOptions.cookieFile = cfg.APICookieFile();
+            fs::create_directories(fs::path(cfg.APICookieFile()).parent_path());
+            api = std::make_unique<APIServer>(apiOptions, &node);
+            api->Start();
+            if (cfg.apiBind != "127.0.0.1" && cfg.apiBind != "::1" && cfg.apiBind != "localhost") {
+                LogWarn("the API listens on %s: anyone who can reach it and knows the login sees your Omni data", cfg.apiBind);
+            }
+        }
+
         OmniOptions options;
         options.activationAllowSenders = cfg.activationAllowSenders;
         options.alertAllowSenders = cfg.alertAllowSenders;
         options.debug = cfg.omniDebug;
         processor.Start(cfg.OmniDataDir(), options);
+        if (api) SetRPCWarmupFinished();
+
         Syncer syncer(source, store, processor, Params().OmniGenesisBlock(), std::chrono::seconds(cfg.pollInterval));
         LogInfo("syncing: network %s, node %s, database %s, start %d", Params().NetworkIDString(), cfg.RPCURL(),
             cfg.DBPath(), Params().OmniGenesisBlock());
-        syncer.Run(g_stop);
+        syncer.Run(ShutdownFlag());
+        if (api) api->Stop();
         LogInfo("stopped");
         return 0;
     } catch (const std::exception& e) {

@@ -1,0 +1,21 @@
+// omnilite-standalone: stands in for Litecoin Core's index/txindex.h. The
+// transaction index is the node's (-txindex, checked at start-up), so it is
+// always in sync from OmniLite's point of view.
+
+#ifndef OMNILITE_STANDALONE_CORESHIM_INDEX_TXINDEX_H
+#define OMNILITE_STANDALONE_CORESHIM_INDEX_TXINDEX_H
+
+#include <memory>
+
+class TxIndex
+{
+public:
+    bool BlockUntilSyncedToCurrentChain() const { return true; }
+    /** OmniLite's addition: the byte offset of a transaction in its block,
+     *  used to order wallet transactions. Not known here. */
+    unsigned int ReadTxPos(const class uint256&) const { return 0; }
+};
+
+extern std::unique_ptr<TxIndex> g_txindex;
+
+#endif // OMNILITE_STANDALONE_CORESHIM_INDEX_TXINDEX_H

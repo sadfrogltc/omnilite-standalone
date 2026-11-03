@@ -9,6 +9,7 @@
 // bitcoin-cli. Only standard Litecoin Core calls are used, so any node
 // version that offers them works.
 
+#include <rpc/protocol.h> // Litecoin Core's error codes
 #include <univalue.h>
 
 #include <stdexcept>
@@ -35,14 +36,6 @@ class NodeUnauthorized : public std::runtime_error
 {
 public:
     NodeUnauthorized();
-};
-
-// Error codes of Litecoin Core (src/rpc/protocol.h).
-enum RPCErrorCode {
-    RPC_METHOD_NOT_FOUND = -32601,
-    RPC_INVALID_ADDRESS_OR_KEY = -5, // also "no such transaction"
-    RPC_INVALID_PARAMETER = -8,
-    RPC_IN_WARMUP = -28,
 };
 
 class RPCClient

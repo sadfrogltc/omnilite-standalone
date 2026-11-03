@@ -46,6 +46,14 @@ struct Config {
     std::vector<std::string> alertAllowSenders;
     std::vector<std::string> omniDebug;
 
+    /** The JSON-RPC API (omni_* calls). */
+    bool api = true;
+    std::string apiBind = "127.0.0.1";
+    int apiPort = 0;
+    std::string apiUser;
+    /** Empty: a cookie file is written at start-up, see APICookieFile. */
+    std::string apiPassword;
+
     bool check = false;
     bool help = false;
 
@@ -57,6 +65,8 @@ struct Config {
     std::string OmniDataDir() const;
     /** RPC user and password, read from the cookie file when no password is set. */
     std::pair<std::string, std::string> Credentials() const;
+    /** The API's cookie file: <datadir>/<network>/.cookie. */
+    std::string APICookieFile() const;
 };
 
 /** Default data directory: ~/.omnilite-standalone. */

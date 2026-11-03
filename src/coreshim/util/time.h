@@ -10,5 +10,6 @@ int64_t GetTime();
 int64_t GetTimeMillis();
 int64_t GetTimeMicros();
 std::string FormatISO8601DateTime(int64_t nTime);
+void MilliSleep(int64_t n);
 
 #endif // OMNILITE_STANDALONE_CORESHIM_UTIL_TIME_H

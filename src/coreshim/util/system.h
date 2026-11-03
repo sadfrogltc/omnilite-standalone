@@ -42,6 +42,15 @@ void SetDataDir(const fs::path& path);
 /** Creates the directory and its parents; false if it already existed. */
 bool TryCreateDirectories(const fs::path& p);
 
+/** A path from a setting: relative ones are taken from the data directory. */
+fs::path AbsPathForConfigVal(const fs::path& path, bool net_specific = true);
+
+/** Renames src to dest, replacing dest. */
+bool RenameOver(fs::path src, fs::path dest);
+
+/** When the program started, for the uptime RPC. */
+int64_t GetStartupTime();
+
 /** Core's LogPrintf: to the program log at info level. */
 template <typename... Args>
 void LogPrintf(const char* fmt, const Args&... args)

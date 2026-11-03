@@ -75,19 +75,28 @@ public:
     void DisconnectBlock(const BlockInfo& block) override;
 
 private:
+    /** Inputs fetched ahead of a block: txid -> transaction (nullptr if unknown) and its block. */
+    using Prefetched = std::map<uint256, std::pair<CTransactionRef, uint256>>;
+
     CBlockIndex* AddIndex(int64_t height, const std::string& hash, int64_t time);
     /** Fetches the inputs of the transactions with an Omni marker. */
-    void Prefetch(const std::vector<CTransactionRef>& txs, int64_t height);
+    Prefetched Prefetch(const std::vector<CTransactionRef>& txs, const std::map<uint256, CTransactionRef>& blockTxs, int64_t height);
     bool GetTransaction(const uint256& txid, CTransactionRef& tx, uint256& blockHash);
     bool ReadBlock(const CBlockIndex* pindex, std::vector<CTransactionRef>& txs);
+    void ClearBlockCaches();
 
     NodeData& m_node;
     CStore& m_store;
     bool m_started = false;
     std::list<CBlockIndex> m_index;
-    /** Transactions of the block being processed and inputs fetched for it. */
+    /**
+     * Transactions of the block being processed, of the block OmniLite
+     * replays and the inputs fetched for them. Changed under cs_main only,
+     * and empty between blocks.
+     */
     std::map<uint256, CTransactionRef> m_blockTxs;
-    std::map<uint256, std::pair<CTransactionRef, uint256>> m_prefetched;
+    std::map<uint256, CTransactionRef> m_replayTxs;
+    Prefetched m_prefetched;
 };
 
 #endif // OMNILITE_STANDALONE_INDEXER_H

@@ -82,13 +82,18 @@ target_compile_options(litecoin_core PRIVATE -w)
 # --- OmniLite Standalone ---
 add_library(omnilite STATIC
   src/config.cpp
+  src/httprpc.cpp
   src/indexer.cpp
   src/logging.cpp
   src/coreshim/coreshim.cpp
   src/coreshim/policy.cpp
+  src/coreshim/rpc/server.cpp
+  ${VENDOR}/rpc/protocol.cpp
+  ${VENDOR}/rpc/util.cpp
   src/omnicore/activation.cpp
   src/omnicore/consensushash.cpp
   src/omnicore/createpayload.cpp
+  src/omnicore/createtx.cpp
   src/omnicore/dbbase.cpp
   src/omnicore/dbspinfo.cpp
   src/omnicore/dbstolist.cpp
@@ -103,7 +108,13 @@ add_library(omnilite STATIC
   src/omnicore/parsing.cpp
   src/omnicore/pending.cpp
   src/omnicore/persistence.cpp
+  src/omnicore/rpc.cpp
   src/omnicore/rpcmbstring.cpp
+  src/omnicore/rpcpayload.cpp
+  src/omnicore/rpcrawtx.cpp
+  src/omnicore/rpcrequirements.cpp
+  src/omnicore/rpctxobject.cpp
+  src/omnicore/rpcvalues.cpp
   src/omnicore/rules.cpp
   src/omnicore/script.cpp
   src/omnicore/sp.cpp
@@ -113,6 +124,7 @@ add_library(omnilite STATIC
   src/omnicore/utilsbitcoin.cpp
   src/omnicore/utilsui.cpp
   src/omnicore/walletcache.cpp
+  src/omnicore/walletfetchtxs.cpp
   src/omnicore/walletutils.cpp
   src/omnicore/convert.cpp
   src/omnicore/parse_string.cpp
@@ -122,12 +134,15 @@ add_library(omnilite STATIC
   src/syncer.cpp)
 target_include_directories(omnilite PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/coreshim)
 target_include_directories(omnilite SYSTEM PUBLIC ${LEVELDB_INCLUDE_DIR})
-target_link_libraries(omnilite PUBLIC litecoin_core PkgConfig::EVENT ${LEVELDB_LIBRARY})
+target_link_libraries(omnilite PUBLIC litecoin_core PkgConfig::EVENT PkgConfig::EVENT_PTHREADS ${LEVELDB_LIBRARY})
 target_compile_options(omnilite PRIVATE -Wall -Wextra)
 # Code taken from OmniLite: warnings that come from building it without a wallet.
 file(GLOB OMNICORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/omnicore/*.cpp)
 set_source_files_properties(${OMNICORE_SOURCES} PROPERTIES COMPILE_OPTIONS
-  "-Wno-unused-parameter;-Wno-unused-variable;-Wno-range-loop-construct")
+  "-Wno-unused-parameter;-Wno-unused-variable;-Wno-unused-function;-Wno-range-loop-construct")
+# Code taken from Litecoin Core.
+set_source_files_properties(${VENDOR}/rpc/protocol.cpp ${VENDOR}/rpc/util.cpp src/coreshim/rpc/server.cpp
+  PROPERTIES COMPILE_OPTIONS "-w")
 
 add_executable(omnilite-standalone src/main.cpp)
 target_link_libraries(omnilite-standalone PRIVATE omnilite)
@@ -137,6 +152,7 @@ target_compile_options(omnilite-standalone PRIVATE -Wall -Wextra)
 enable_testing()
 add_executable(test_omnilite
   test/main.cpp
+  test/httprpc_tests.cpp # first: its warmup test needs a fresh process
   test/config_tests.cpp
   test/core_tests.cpp
   test/indexer_tests.cpp
@@ -173,7 +189,7 @@ add_executable(test_omnilite
   test/omnicore/sender_firstin_tests.cpp
   test/omnicore/test_shim.cpp
   test/omnicore/utils_tx.cpp)
-target_link_libraries(test_omnilite PRIVATE omnilite Boost::unit_test_framework PkgConfig::EVENT_PTHREADS)
+target_link_libraries(test_omnilite PRIVATE omnilite Boost::unit_test_framework)
 target_include_directories(test_omnilite PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(test_omnilite PRIVATE -Wall -Wextra)
 # Tests taken from OmniLite.

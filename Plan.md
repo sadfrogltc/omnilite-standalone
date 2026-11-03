@@ -152,6 +152,22 @@ Nach jeder Phase: Build und Unit-Tests unter Linux grün, Commit, Push. Der Abgl
 ### Phase 5 – API
 - JSON-RPC-Server (libevent) mit den `omni_*`-Aufrufen im Format von `omnilitecored`, lesende
   Litecoin-Aufrufe werden an `litecoind` durchgereicht.
+- **Stand:** umgesetzt. OmniLites RPC-Dateien laufen unverändert (`rpc`, `rpctxobject`, `rpcvalues`,
+  `rpcrequirements`, `rpcpayload`, `rpcrawtx`, dazu `createtx`, `walletfetchtxs`): alle lesenden
+  `omni_*`-Aufrufe, `omni_createpayload_*` und `omni_createrawtx_*`, dazu `help`, `stop`, `uptime`,
+  `getrpcinfo`. Hilfe- und Fehlertexte stammen aus Core (`rpc/protocol`, `rpc/util` in `vendor/core`,
+  `rpc/server` als Stellvertreter). Der HTTP-Teil (`src/httprpc.cpp`) folgt Cores `httprpc.cpp`: Basic
+  Auth mit `apiuser`/`apipassword` oder Cookie (`<datadir>/<netz>/.cookie`, nur für den Besitzer
+  lesbar), Einzel- und Batch-Anfragen, Cores HTTP-Statuscodes, `RPC_IN_WARMUP`, solange OmniLite
+  seinen State lädt. Standard: `127.0.0.1`, Port 9432 (Testnet 19432, Regtest 19543). Durchgereicht an
+  `litecoind` wird nur eine feste Liste lesender Aufrufe (`getblock*`, `getrawtransaction`,
+  `decoderawtransaction`, `gettxout`, `getrawmempool` u. a.); die Wallet des Nodes bleibt unerreichbar.
+  Ein Aufruf läuft unter `cs_main`, der Indexer hält `cs_main`, während er einen Block in OmniLite
+  einspielt: die API sieht den State nie halb verbucht. Das Holen der Blöcke und Inputs läuft ohne
+  Sperre. Getestet: Login, Cookie, Formate, Statuscodes, Durchreichen, Warmup und `omni_getinfo`,
+  `omni_getproperty`, `omni_getbalance`, `omni_gettransaction`, `omni_listblocktransactions`,
+  `omni_createpayload_simplesend` auf einem echten OmniLite-State. Die Wallet-Aufrufe
+  (`omni_listtransactions`, `omni_getwalletbalances`) fehlen bis Phase 7.
 
 ### Phase 6 – Mempool und Pending
 - Unbestätigte Omni-Txs, `omni_listpendingtransactions`.
