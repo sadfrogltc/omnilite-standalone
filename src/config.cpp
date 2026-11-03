@@ -110,9 +110,14 @@ std::string Config::RPCURL() const
     return "http://" + rpcConnect + ":" + std::to_string(rpcPort);
 }
 
+std::string Config::NetDir() const
+{
+    return JoinPath(dataDir, Params().NetworkIDString());
+}
+
 std::string Config::DBPath() const
 {
-    return JoinPath(JoinPath(dataDir, Params().NetworkIDString()), "index");
+    return JoinPath(NetDir(), "index");
 }
 
 std::string Config::OmniDataDir() const
@@ -191,6 +196,12 @@ Config LoadConfig(const std::vector<std::string>& args)
             cfg.check = true;
         } else if (key == "status") {
             cfg.status = true;
+        } else if (key == "exportsnapshot") {
+            cfg.exportSnapshot = value;
+        } else if (key == "importsnapshot") {
+            cfg.importSnapshot = value;
+        } else if (key == "snapshothash") {
+            cfg.snapshotHash = value;
         } else if (key == "datadir") {
             cfg.dataDir = value;
         } else if (key == "conf") {
@@ -202,6 +213,10 @@ Config LoadConfig(const std::vector<std::string>& args)
         }
     }
     if (cfg.dataDir.empty()) throw ConfigError("-datadir must not be empty");
+    if (!cfg.importSnapshot.empty() && cfg.snapshotHash.empty()) {
+        throw ConfigError("-importsnapshot needs -snapshothash=<consensus hash>, as -exportsnapshot printed it");
+    }
+    if (!cfg.exportSnapshot.empty() && !cfg.importSnapshot.empty()) throw ConfigError("-exportsnapshot and -importsnapshot exclude each other");
 
     std::map<std::string, std::string> values;
     std::string path = confPath.empty() ? JoinPath(cfg.dataDir, CONFIG_FILENAME) : confPath;
@@ -247,6 +262,11 @@ std::string HelpMessage()
       << "  -check              check the node connection and exit\n"
       << "  -status             show the status of the running program (over its API) and exit;\n"
       << "                      exit code 0 if it is synced\n"
+      << "  -exportsnapshot=<f> write the index and the Omni state to the tar file f and exit;\n"
+      << "                      only while the program is stopped; prints the consensus hash\n"
+      << "  -importsnapshot=<f> start from the snapshot f instead of the Omni start block, then exit;\n"
+      << "                      needs -snapshothash and an empty <datadir>/<net>\n"
+      << "  -snapshothash=<h>   the consensus hash the imported state must have\n"
       << "  -datadir=<dir>      data directory (default: " << DefaultDataDir() << ")\n"
       << "  -conf=<file>        config file (default: <datadir>/" << CONFIG_FILENAME << ")\n"
       << "  -network=<net>      main, test or regtest (default: main)\n"
@@ -265,6 +285,6 @@ std::string HelpMessage()
       << "  -apiport=<port>     API port (default: 9432, test 19432, regtest 19543)\n"
       << "  -apiuser=<user>     API user\n"
       << "  -apipassword=<pw>   API password (default: a new cookie in <datadir>/<net>/.cookie)\n"
-      << "\nEvery option except -check, -status, -datadir and -conf can also be set in the config file.\n";
+      << "\nEvery option except -check, -status, the snapshot options, -datadir and -conf can also be set in the config file.\n";
     return s.str();
 }

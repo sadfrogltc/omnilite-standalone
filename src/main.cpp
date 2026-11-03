@@ -13,6 +13,7 @@
 #include <rpc/server.h>
 #include <rpcclient.h>
 #include <shutdown.h>
+#include <snapshot.h>
 #include <status.h>
 #include <store.h>
 #include <syncer.h>
@@ -155,6 +156,53 @@ int RunStatus(const Config& cfg)
     return find_value(s, "synced").isTrue() ? 0 : 1;
 }
 
+OmniOptions OptionsOf(const Config& cfg)
+{
+    OmniOptions options;
+    options.activationAllowSenders = cfg.activationAllowSenders;
+    options.alertAllowSenders = cfg.alertAllowSenders;
+    options.debug = cfg.omniDebug;
+    return options;
+}
+
+void PrintSnapshot(const SnapshotInfo& info)
+{
+    Line("Network", info.network);
+    Line("Block", std::to_string(info.height) + " " + info.blockHash + " (" + FormatISO8601DateTime(info.blockTime) + ")");
+    Line("Files", std::to_string(info.files));
+    Line("Consensus", info.consensusHash);
+}
+
+/** -exportsnapshot / -importsnapshot; 0 on success. */
+int RunSnapshot(const Config& cfg)
+{
+    try {
+        std::pair<std::string, std::string> credentials = cfg.Credentials();
+        RPCClient node(cfg.rpcConnect, cfg.rpcPort, credentials.first, credentials.second);
+        RPCNodeData nodeData(node);
+        if (!cfg.exportSnapshot.empty()) {
+            SnapshotInfo info = ExportSnapshot(cfg.NetDir(), cfg.undoDepth, nodeData, OptionsOf(cfg), cfg.exportSnapshot);
+            Line("Snapshot", cfg.exportSnapshot);
+            PrintSnapshot(info);
+            std::printf("\nImport elsewhere with -importsnapshot=<file> -snapshothash=%s\n", info.consensusHash.c_str());
+        } else {
+            std::string chain = find_value(node.Call("getblockchaininfo"), "chain").get_str();
+            if (chain != Params().CoreChain()) {
+                throw std::runtime_error("node runs chain \"" + chain + "\", configured network is \"" + Params().NetworkIDString() + "\"");
+            }
+            RPCChainSource source(node);
+            SnapshotInfo info = ImportSnapshot(cfg.NetDir(), cfg.undoDepth, nodeData, source, OptionsOf(cfg),
+                                               cfg.importSnapshot, cfg.snapshotHash);
+            Line("Imported", cfg.importSnapshot + " into " + cfg.NetDir());
+            PrintSnapshot(info);
+        }
+        return 0;
+    } catch (const std::exception& e) {
+        Line("Snapshot", std::string("ERROR: ") + e.what());
+        return 1;
+    }
+}
+
 void HandleSignal(int) { StartShutdown(); }
 
 /** Syncs the index with the node and answers the API until SIGINT, SIGTERM or the stop call. */
@@ -207,11 +255,7 @@ int Run(const Config& cfg)
             }
         }
 
-        OmniOptions options;
-        options.activationAllowSenders = cfg.activationAllowSenders;
-        options.alertAllowSenders = cfg.alertAllowSenders;
-        options.debug = cfg.omniDebug;
-        processor.Start(cfg.OmniDataDir(), options);
+        processor.Start(cfg.OmniDataDir(), OptionsOf(cfg));
         if (api) SetRPCWarmupFinished();
 
         // Unconfirmed Omni transactions only matter to the API (omni_listpendingtransactions).
@@ -268,6 +312,9 @@ int main(int argc, char* argv[])
     }
     if (cfg.status) {
         return RunStatus(cfg);
+    }
+    if (!cfg.exportSnapshot.empty() || !cfg.importSnapshot.empty()) {
+        return RunSnapshot(cfg);
     }
     return Run(cfg);
 }

@@ -91,6 +91,8 @@ add_library(omnilite STATIC
   src/dexguard.cpp
   src/dryrun.cpp
   src/status.cpp
+  src/snapshot.cpp
+  src/tar.cpp
   src/coreshim/coreshim.cpp
   src/coreshim/policy.cpp
   src/coreshim/rpc/server.cpp
@@ -167,6 +169,7 @@ add_executable(test_omnilite
   test/rpcclient_tests.cpp
   test/store_tests.cpp
   test/syncer_tests.cpp
+  test/tar_tests.cpp
   test/omnicore/alert_tests.cpp
   test/omnicore/change_issuer_tests.cpp
   test/omnicore/checkpoint_tests.cpp

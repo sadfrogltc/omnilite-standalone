@@ -56,10 +56,16 @@ struct Config {
 
     bool check = false;
     bool status = false;
+    // -exportsnapshot, -importsnapshot, -snapshothash (command line only)
+    std::string exportSnapshot;
+    std::string importSnapshot;
+    std::string snapshotHash;
     bool help = false;
 
     /** URL path of the node's RPC endpoint, e.g. http://127.0.0.1:9332. */
     std::string RPCURL() const;
+    /** Directory of the selected network: <datadir>/<network>. */
+    std::string NetDir() const;
     /** Database directory of the selected network. */
     std::string DBPath() const;
     /** Directory of OmniLite's own state files and databases. */

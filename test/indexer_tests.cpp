@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <key_io.h>
 #include <omnicore/activation.h>
@@ -37,7 +38,9 @@
 #include <omnicore/tally.h>
 #include <rpc/server.h>
 #include <rpcclient.h>
+#include <snapshot.h>
 #include <store.h>
+#include <tar.h>
 #include <test/omnicore/test_shim.h>
 #include <test/util.h>
 
@@ -1173,6 +1176,121 @@ BOOST_FIXTURE_TEST_CASE(class_b_on_mainnet, MainFixture)
     Connect("b1", start + 1, {classB});
     BOOST_CHECK_EQUAL(Balance(alice, 3), 10 * COIN);
     BOOST_CHECK_EQUAL(find_value(w.Call("omni_getproperty", {UniValue(3)}), "data").get_str(), std::string(150, 'x'));
+}
+
+namespace {
+
+/** The node's best chain for the snapshot checks: a hash per height. */
+class HashChain : public ChainSource
+{
+public:
+    std::map<int64_t, std::string> hashes;
+    int64_t GetBlockCount() override { return hashes.empty() ? -1 : hashes.rbegin()->first; }
+    std::string GetBlockHash(int64_t height) override
+    {
+        auto it = hashes.find(height);
+        if (it == hashes.end()) throw HeightOutOfRange("Block height out of range");
+        return it->second;
+    }
+    BlockHeader GetBlockHeader(const std::string&) override { throw NodeError("not needed"); }
+};
+
+bool SnapshotFails(const std::function<void()>& f, const std::string& text)
+{
+    try {
+        f();
+    } catch (const SnapshotError& e) {
+        BOOST_TEST_MESSAGE(e.what());
+        return std::string(e.what()).find(text) != std::string::npos;
+    }
+    return false;
+}
+
+} // namespace
+
+BOOST_AUTO_TEST_CASE(snapshot_export_and_import)
+{
+    std::vector<unsigned char> issue = CreatePayload_IssuanceFixed(1, MSC_PROPERTY_TYPE_DIVISIBLE, 0, "Games", "", "Coin", "", "", 1000 * COIN);
+    Connect("n1", start, {node.OmniTx(alice, issue)});
+    Connect("n2", start + 1, {node.OmniTx(alice, CreatePayload_SimpleSend(3, 400 * COIN), &bob)});
+    TempDir out;
+    const std::string file = out.Sub("snapshot.tar");
+
+    // Not while the program runs: the databases are locked.
+    BOOST_CHECK(SnapshotFails([&] { ExportSnapshot(dir.path, 100, node, OmniOptions(), file); }, "still running"));
+    BOOST_CHECK(!std::filesystem::exists(file));
+
+    Close();
+    SnapshotInfo exported = ExportSnapshot(dir.path, 100, node, OmniOptions(), file);
+    ClearMemoryState();
+    BOOST_CHECK_EQUAL(exported.network, "regtest");
+    BOOST_CHECK_EQUAL(exported.height, start + 1);
+    BOOST_CHECK_EQUAL(exported.blockHash, Hash("n2"));
+    BOOST_CHECK_EQUAL(exported.consensusHash.size(), 64u);
+    BOOST_CHECK_GT(exported.files, 0u);
+    // A plain tar sees the description first, then the files under regtest/.
+    BOOST_CHECK_EQUAL(std::system(("tar -tf " + file + " | head -1 | grep -qx SNAPSHOT.json").c_str()), 0);
+
+    HashChain chain;
+    chain.hashes = {{start, Hash("n1")}, {start + 1, Hash("n2")}};
+    TempDir other;
+    const std::string netDir = other.Sub("regtest");
+    auto import = [&](const std::string& f, const std::string& hash) {
+        ImportSnapshot(netDir, 100, node, chain, OmniOptions(), f, hash);
+    };
+    auto nothingLeft = [&] { return !std::filesystem::exists(netDir) && !std::filesystem::exists(netDir + ".importing"); };
+
+    // The expected hash is required and must be the state's own.
+    BOOST_CHECK(SnapshotFails([&] { import(file, ""); }, "required"));
+    BOOST_CHECK(SnapshotFails([&] { import(file, std::string(64, '0')); }, "consensus hash of the imported state"));
+    ClearMemoryState();
+    BOOST_CHECK(nothingLeft());
+
+    // The block must be in the node's chain, and the node that far.
+    chain.hashes[start + 1] = Hash("other");
+    BOOST_CHECK(SnapshotFails([&] { import(file, exported.consensusHash); }, "not in the node's chain"));
+    chain.hashes.erase(start + 1);
+    BOOST_CHECK(SnapshotFails([&] { import(file, exported.consensusHash); }, "sync first"));
+    chain.hashes[start + 1] = Hash("n2");
+    BOOST_CHECK(nothingLeft());
+
+    // One changed byte in a file of the state.
+    const std::string tampered = out.Sub("tampered.tar");
+    {
+        TarReader r(file);
+        TarWriter w(tampered);
+        std::string name;
+        uint64_t size = 0;
+        bool changed = false;
+        while (r.Next(name, size)) {
+            std::string data;
+            r.Read([&](const char* d, size_t n) { data.append(d, n); });
+            if (!changed && name != SNAPSHOT_MANIFEST && !data.empty()) {
+                data[0] ^= 1;
+                changed = true;
+            }
+            w.Add(name, data);
+        }
+        w.Finish();
+    }
+    BOOST_CHECK(SnapshotFails([&] { import(tampered, exported.consensusHash); }, "damaged"));
+    BOOST_CHECK(nothingLeft());
+
+    // With the right hash: the state as exported.
+    import(file, exported.consensusHash);
+    ClearMemoryState();
+    {
+        CStore store(netDir + "/index", "regtest", 100);
+        OmniIndexer indexer(node, store);
+        indexer.Start(netDir + "/omnicore", OmniOptions());
+        BOOST_CHECK_EQUAL(store.Tip()->hash, Hash("n2"));
+        BOOST_CHECK_EQUAL(Balance(alice, 3), 600 * COIN);
+        BOOST_CHECK_EQUAL(Balance(bob, 3), 400 * COIN);
+    }
+    ClearMemoryState();
+
+    // Never over existing data.
+    BOOST_CHECK(SnapshotFails([&] { import(file, exported.consensusHash); }, "already holds data"));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

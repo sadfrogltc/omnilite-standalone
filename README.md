@@ -50,6 +50,23 @@ Konfiguration: `~/.omnilite-standalone/omnilite-standalone.conf`, Vorlage in
 [omnilite-standalone.conf.example](omnilite-standalone.conf.example). Ohne `rpcpassword` wird das Cookie
 von `litecoind` gelesen (`~/.litecoin/.cookie`, bei Testnet und Regtest im Unterordner).
 
+## Snapshot
+
+Ein Snapshot ist der Index samt Omni-Stand bei einem Block, als tar-Datei. Damit startet eine andere
+Installation dort, statt ab dem Omni-Genesis-Block alles neu zu verarbeiten.
+
+```bash
+# bei gestopptem Programm:
+./build/omnilite-standalone -exportsnapshot=omni-snapshot.tar
+# auf dem anderen Rechner, mit dem Consensus-Hash, den der Export ausgegeben hat:
+./build/omnilite-standalone -importsnapshot=omni-snapshot.tar -snapshothash=<hash>
+```
+
+Der Import berechnet den Consensus-Hash aus dem importierten Stand neu und importiert nur, wenn er dem
+angegebenen entspricht; der Wert in der Datei selbst zählt nicht. Den Hash also auf einem getrennten Weg
+weitergeben oder mit `omni_getcurrentconsensushash` einer vertrauenswürdigen Node vergleichen. Außerdem
+muss der Block des Snapshots in der Chain der Node liegen, und `<datadir>/<netz>` muss leer sein.
+
 ## Als Dienst (systemd)
 
 Die Unit [contrib/systemd/omnilite-standalone.service](contrib/systemd/omnilite-standalone.service)

@@ -269,8 +269,23 @@ Nach jeder Phase: Build und Unit-Tests unter Linux grün, Commit, Push. Der Abgl
   `rpcuser`/`rpcpassword` (`rpcauth` in der `litecoin.conf`), weil der Dienst das Cookie der Node
   nicht lesen kann. `cmake --install` installiert das Programm.
 
+- **Stand Snapshot:** umgesetzt (`src/snapshot.cpp`, `src/tar.cpp`). Entscheidungen: Export nur bei
+  gestopptem Programm, Import nur mit angegebenem Consensus-Hash, tar ohne neue Abhängigkeit.
+  `-exportsnapshot=<datei>` öffnet Index und OmniLite (scheitert, wenn das Programm läuft, weil die
+  Datenbanken gesperrt sind), berechnet OmniLites Consensus-Hash am Tip und schreibt `<netz>/index` und
+  `<netz>/omnicore` als ustar-Datei, vorneweg `SNAPSHOT.json` (Netz, Block, Hash, Zeit, Consensus-Hash,
+  SHA-256 und Größe jeder Datei); LevelDB-`LOCK`/`LOG` bleiben draußen, geschrieben wird über `.part`.
+  `-importsnapshot=<datei> -snapshothash=<hash>` entpackt in `<netz>.importing`, prüft jede Datei gegen
+  die Liste, ob der Block in der Chain der Node liegt und die Node so weit ist, ob der Index dort endet,
+  lädt OmniLite darauf und vergleicht den daraus berechneten Consensus-Hash mit dem angegebenen; erst
+  dann wird der Ordner zu `<netz>`. Bei jedem Fehler bleibt nichts zurück; über vorhandene Daten wird nie
+  importiert. Der tar-Leser nimmt nur normale Dateien mit relativen Pfaden (kein `..`, keine Links).
+  Getestet: tar mit langen Namen und gegen das System-`tar`, unsichere Namen, kaputter Header, Links,
+  abgeschnittene Datei; Export bei laufendem Programm, falscher und fehlender Hash, Block nicht in der
+  Chain, Node zu weit hinten, ein geändertes Byte, erfolgreicher Import mit gleichem Stand, Import über
+  vorhandene Daten.
+
 ### Später
-- Snapshot-Export und -Import.
 - Windows erst, wenn Linux stabil und getestet ist.
 
 ---
