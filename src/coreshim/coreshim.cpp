@@ -199,6 +199,30 @@ bool NodeAborted() { return g_aborted; }
 CClientUIInterface uiInterface;
 CTxMemPool mempool;
 
+void CTxMemPool::queryHashes(std::vector<uint256>& vtxid) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    vtxid.assign(m_txids.begin(), m_txids.end());
+}
+
+bool CTxMemPool::exists(const uint256& hash) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_txids.count(hash) > 0;
+}
+
+void CTxMemPool::SetHashes(const std::set<uint256>& txids)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_txids = txids;
+}
+
+void CTxMemPool::RemoveForBlock(const std::vector<uint256>& txids)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const uint256& txid : txids) m_txids.erase(txid);
+}
+
 std::string ScriptToAsmStr(const CScript& script, const bool)
 {
     return HexStr(script.begin(), script.end());

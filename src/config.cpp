@@ -236,7 +236,7 @@ std::string HelpMessage()
       << "  -rpcuser=<user>     litecoind RPC user\n"
       << "  -rpcpassword=<pw>   litecoind RPC password (default: use the cookie file)\n"
       << "  -rpccookiefile=<f>  litecoind cookie file (default: ~/.litecoin/[net/].cookie)\n"
-      << "  -pollinterval=<s>   seconds between checks for new blocks (default: 5)\n"
+      << "  -pollinterval=<s>   seconds between checks for new blocks and mempool transactions (default: 5)\n"
       << "  -undodepth=<n>      blocks of undo data kept for reorgs (default: 100)\n"
       << "  -omniactivationallowsender=<a,b>  regtest only: extra senders of feature activations\n"
       << "  -omnialertallowsender=<a,b>       regtest only: extra senders of alerts\n"

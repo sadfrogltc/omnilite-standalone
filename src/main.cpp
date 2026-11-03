@@ -8,6 +8,7 @@
 #include <httprpc.h>
 #include <indexer.h>
 #include <logging.h>
+#include <mempool.h>
 #include <pubkey.h>
 #include <rpc/server.h>
 #include <rpcclient.h>
@@ -21,6 +22,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -149,6 +151,24 @@ int Run(const Config& cfg)
         options.debug = cfg.omniDebug;
         processor.Start(cfg.OmniDataDir(), options);
         if (api) SetRPCWarmupFinished();
+
+        // Unconfirmed Omni transactions only matter to the API (omni_listpendingtransactions).
+        std::thread mempoolThread;
+        if (api) {
+            mempoolThread = std::thread([&nodeData, &cfg] {
+                MempoolWatcher watcher(nodeData);
+                watcher.Run(ShutdownFlag(), std::chrono::seconds(cfg.pollInterval));
+            });
+        }
+        struct JoinOnExit {
+            std::thread& t;
+            ~JoinOnExit()
+            {
+                if (!t.joinable()) return;
+                StartShutdown(); // also on an error: the watcher must not outlive what it uses
+                t.join();
+            }
+        } joinMempool{mempoolThread};
 
         Syncer syncer(source, store, processor, Params().OmniGenesisBlock(), std::chrono::seconds(cfg.pollInterval));
         LogInfo("syncing: network %s, node %s, database %s, start %d", Params().NetworkIDString(), cfg.RPCURL(),

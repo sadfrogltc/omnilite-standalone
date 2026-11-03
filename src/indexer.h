@@ -36,6 +36,8 @@ public:
     virtual std::vector<CTransactionRef> GetBlockTxs(const std::string& hash) = 0;
     /** A transaction and the block it is in; false if the node does not know it. */
     virtual bool GetTx(const uint256& txid, CTransactionRef& tx, uint256& blockHash) = 0;
+    /** The txids in the node's mempool. */
+    virtual std::vector<uint256> GetMempool() = 0;
 };
 
 /** NodeData over RPC: getblock (verbosity 2) and getrawtransaction (needs -txindex). */
@@ -45,6 +47,7 @@ public:
     explicit RPCNodeData(const RPCClient& node) : m_node(node) {}
     std::vector<CTransactionRef> GetBlockTxs(const std::string& hash) override;
     bool GetTx(const uint256& txid, CTransactionRef& tx, uint256& blockHash) override;
+    std::vector<uint256> GetMempool() override;
 
 private:
     const RPCClient& m_node;

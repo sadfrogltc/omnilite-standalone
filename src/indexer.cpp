@@ -12,6 +12,7 @@
 #include <rpcclient.h>
 #include <store.h>
 #include <streams.h>
+#include <txmempool.h>
 #include <util/strencodings.h>
 #include <util/system.h>
 #include <validation.h>
@@ -87,6 +88,21 @@ bool RPCNodeData::GetTx(const uint256& txid, CTransactionRef& tx, uint256& block
     const UniValue hash = find_value(r, "blockhash");
     blockHash = hash.isStr() ? uint256S(hash.get_str()) : uint256();
     return true;
+}
+
+std::vector<uint256> RPCNodeData::GetMempool()
+{
+    UniValue r;
+    try {
+        r = m_node.Call("getrawmempool");
+    } catch (const RPCError& e) {
+        throw NodeError(std::string("getrawmempool: ") + e.what());
+    } catch (const NodeUnreachable& e) {
+        throw NodeError(e.what());
+    }
+    std::vector<uint256> txids;
+    for (const UniValue& id : r.getValues()) txids.push_back(uint256S(id.get_str()));
+    return txids;
 }
 
 // --- OmniIndexer ---
@@ -252,6 +268,16 @@ void OmniIndexer::ConnectBlock(CBlockTx&, const BlockHeader& header)
     } catch (const std::exception& e) {
         throw FatalError("block " + std::to_string(header.height) + " failed half way, restart to reload the last saved state: " + e.what());
     }
+
+    // As Core after ConnectTip: the block's transactions leave the mempool
+    // and the marker cache (validation.cpp, ActivateBestChain).
+    std::vector<uint256> txids;
+    for (const CTransactionRef& tx : txs) {
+        if (!tx) continue;
+        txids.push_back(tx->GetHash());
+        RemoveFromMarkerCache(tx->GetHash());
+    }
+    mempool.RemoveForBlock(txids);
     if (NodeAborted()) throw FatalError("OmniLite stopped at block " + std::to_string(header.height) + ", see the log");
 }
 

@@ -10,6 +10,8 @@
 #include <chainparams.h>
 #include <hash.h>
 #include <httprpc.h>
+#include <mempool.h>
+#include <txmempool.h>
 #include <key_io.h>
 #include <omnicore/activation.h>
 #include <omnicore/createpayload.h>
@@ -75,7 +77,21 @@ public:
     std::map<uint256, CTransactionRef> txs;
     /** The block of each transaction in one; unknown means unconfirmed. */
     std::map<uint256, uint256> txBlock;
+    std::vector<uint256> mempoolTxs;
     bool unreachable = false;
+
+    std::vector<uint256> GetMempool() override
+    {
+        if (unreachable) throw NodeError("connection refused");
+        return mempoolTxs;
+    }
+
+    /** tx enters the mempool (unconfirmed). */
+    void Broadcast(const CTransactionRef& tx)
+    {
+        txs[tx->GetHash()] = tx;
+        mempoolTxs.push_back(tx->GetHash());
+    }
 
     std::vector<CTransactionRef> GetBlockTxs(const std::string& hash) override
     {
@@ -318,6 +334,82 @@ BOOST_AUTO_TEST_CASE(api_answers_from_the_state)
     named.pushKV("propertyid", 3);
     named.pushKV("amount", "0.5");
     BOOST_CHECK_EQUAL(client.Call("omni_createpayload_simplesend", named).get_str(), "00000000000000030000000002faf080");
+}
+
+BOOST_AUTO_TEST_CASE(pending_transactions_from_the_mempool)
+{
+    std::vector<unsigned char> issue = CreatePayload_IssuanceFixed(1, MSC_PROPERTY_TYPE_DIVISIBLE, 0, "Games", "", "Coin", "", "", 1000 * COIN);
+    Connect("m1", start, {node.OmniTx(alice, issue)});
+
+    // The node's mempool: an Omni send and a plain payment.
+    CTransactionRef send = node.OmniTx(alice, CreatePayload_SimpleSend(3, 400 * COIN), &bob);
+    node.Broadcast(send);
+    COutPoint plain = node.Fund(carol, 1000);
+    node.mempoolTxs.push_back(plain.hash);
+
+    MempoolWatcher watcher(node);
+    watcher.Refresh();
+    BOOST_CHECK(IsInMarkerCache(send->GetHash()));
+    BOOST_CHECK(!IsInMarkerCache(plain.hash));
+    BOOST_CHECK(mempool.exists(send->GetHash()));
+    BOOST_CHECK(mempool.exists(plain.hash));
+
+    RegisterOmniRPCCommands();
+    if (RPCIsInWarmup(nullptr)) SetRPCWarmupFinished();
+    APIOptions options;
+    options.user = "u";
+    options.password = "p";
+    APIServer api(options, nullptr);
+    api.Start();
+    RPCClient client("127.0.0.1", api.Port(), "u", "p", 10);
+    auto pending = [&](const std::string& filter) {
+        UniValue params(UniValue::VARR);
+        if (!filter.empty()) params.push_back(filter);
+        return client.Call("omni_listpendingtransactions", params);
+    };
+
+    // Listed unconfirmed, without a verdict on validity; balances are untouched.
+    UniValue list = pending("");
+    BOOST_REQUIRE_EQUAL(list.size(), 1u);
+    BOOST_CHECK_EQUAL(find_value(list[0], "txid").get_str(), send->GetHash().GetHex());
+    BOOST_CHECK_EQUAL(find_value(list[0], "amount").get_str(), "400.00000000");
+    BOOST_CHECK_EQUAL(find_value(list[0], "confirmations").get_int(), 0);
+    BOOST_CHECK(find_value(list[0], "valid").isNull());
+    BOOST_CHECK_EQUAL(pending(AddressOf(bob)).size(), 1u);
+    BOOST_CHECK_EQUAL(pending(AddressOf(carol)).size(), 0u);
+    BOOST_CHECK_EQUAL(Balance(bob, 3), 0);
+    UniValue params(UniValue::VARR);
+    params.push_back(send->GetHash().GetHex());
+    BOOST_CHECK_EQUAL(find_value(client.Call("omni_gettransaction", params), "confirmations").get_int(), 0);
+
+    // Mined: out of the mempool and the marker cache at once, as in Core.
+    node.mempoolTxs = {plain.hash};
+    Connect("m2", start + 1, {send});
+    BOOST_CHECK(!IsInMarkerCache(send->GetHash()));
+    BOOST_CHECK(!mempool.exists(send->GetHash()));
+    BOOST_CHECK_EQUAL(pending("").size(), 0u);
+    BOOST_CHECK_EQUAL(Balance(bob, 3), 400 * COIN);
+
+    // A pending transaction the node drops (e.g. replaced) disappears with the next refresh.
+    CTransactionRef dropped = node.OmniTx(alice, CreatePayload_SimpleSend(3, 1 * COIN), &carol);
+    node.Broadcast(dropped);
+    watcher.Refresh();
+    BOOST_CHECK_EQUAL(pending("").size(), 1u);
+    node.mempoolTxs.clear();
+    watcher.Refresh();
+    BOOST_CHECK(!IsInMarkerCache(dropped->GetHash()));
+    BOOST_CHECK_EQUAL(pending("").size(), 0u);
+
+    // A failing node leaves the last known mempool in place.
+    node.Broadcast(dropped);
+    watcher.Refresh();
+    node.unreachable = true;
+    BOOST_CHECK_THROW(watcher.Refresh(), NodeError);
+    node.unreachable = false;
+    BOOST_CHECK(mempool.exists(dropped->GetHash()));
+
+    node.mempoolTxs.clear();
+    watcher.Refresh();
 }
 
 BOOST_AUTO_TEST_SUITE_END()

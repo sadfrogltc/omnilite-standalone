@@ -13,7 +13,8 @@ benutzt; die Umsetzung steht in `coreshim.cpp` und `policy.cpp`.
 | `policy/policy.h` | `GetDustThreshold`, `IsDust`, `minRelayTxFee` (Code aus Cores `policy.cpp`) |
 | `util/system.h` | `gArgs` für die `-omni*`-Argumente, `GetDataDir`, `TryCreateDirectories`, `LogPrintf` |
 | `util/time.h`, `sync.h`, `fs.h` | Zeit, Locks (`std::recursive_mutex`), `std::filesystem` |
-| `ui_interface.h`, `txmempool.h`, `interfaces/wallet.h` | ohne Wirkung: keine GUI, keine eigene Wallet |
+| `txmempool.h` | die Txids im Mempool der Node, gefüllt von `MempoolWatcher` (`src/mempool.cpp`) |
+| `ui_interface.h`, `interfaces/wallet.h` | ohne Wirkung: keine GUI, keine eigene Wallet |
 | `rpc/server.h`, `rpc/server.cpp` | Cores Befehlstabelle, Anfrage-Parsing, `help`/`stop`/`uptime`/`getrpcinfo` (Code aus Cores `rpc/server.cpp` ohne Timer und Signale); jeder Befehl läuft unter `cs_main` |
 | `index/txindex.h` | `g_txindex`: der Index ist der des Nodes, also immer synchron |
 | `wallet/rpcwallet.h`, `random.h` | leer bzw. `GetRandBytes` für das Cookie |

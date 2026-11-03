@@ -171,6 +171,17 @@ Nach jeder Phase: Build und Unit-Tests unter Linux grün, Commit, Push. Der Abgl
 
 ### Phase 6 – Mempool und Pending
 - Unbestätigte Omni-Txs, `omni_listpendingtransactions`.
+- **Stand:** umgesetzt. In Core landet jede Tx, die in den Mempool kommt, über `TryToAddToMarkerCache`
+  im Marker-Cache; `omni_listpendingtransactions` zeigt die Mempool-Txs aus diesem Cache. Hier fragt
+  `MempoolWatcher` (`src/mempool.cpp`) im Abstand von `pollinterval` den Mempool der Node ab
+  (`getrawmempool`), holt neue Txs und gibt sie an `TryToAddToMarkerCache`; Txs, die die Node nicht mehr
+  hat, verlassen den Cache. Die Txids stehen im Stellvertreter `mempool` (`coreshim/txmempool.h`), den
+  OmniLites `queryHashes` liest. Wie nach Cores `ConnectTip` nimmt der Indexer die Txs eines neuen
+  Blocks sofort aus Mempool und Cache. Unbestätigte Txs zeigt `omni_gettransaction` mit 0
+  Bestätigungen, ohne Urteil über die Gültigkeit, wie `omnilitecored`. Fällt die Node aus, bleibt der
+  letzte bekannte Mempool stehen. Der Watcher läuft nur mit API. Getestet mit einer simulierten Node:
+  Aufnahme, Filter nach Adresse, Bestätigung durch einen Block, Verdrängung aus dem Mempool,
+  Node-Ausfall. `my_pending` (eigene gesendete Txs, vorläufige Guthaben) bleibt bis Phase 7 leer.
 
 ### Phase 7 bis 9 – Senden über die Node-Wallet
 - 7: Tx-Builder (Class C/B), Dry-Run, `omni_send` und Verwandte, `omni_createpayload_*`, `omni_createrawtx_*`.

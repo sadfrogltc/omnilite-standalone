@@ -13,7 +13,7 @@ rpcconnect=127.0.0.1
 # Used when rpcpassword is empty. Default: ~/.litecoin/.cookie (testnet4/, regtest/ for the other networks).
 #rpccookiefile=
 
-# Seconds between checks for new blocks once synced.
+# Seconds between checks for new blocks once synced, and for new mempool transactions.
 #pollinterval=5
 
 # Blocks of undo data kept for reorgs (minimum 10).

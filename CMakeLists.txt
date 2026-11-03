@@ -85,6 +85,7 @@ add_library(omnilite STATIC
   src/httprpc.cpp
   src/indexer.cpp
   src/logging.cpp
+  src/mempool.cpp
   src/coreshim/coreshim.cpp
   src/coreshim/policy.cpp
   src/coreshim/rpc/server.cpp

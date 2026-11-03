@@ -4,9 +4,9 @@ Eigenständiger OmniLite-Indexer, der gegen jeden aktuellen `litecoind` läuft, 
 gepatchten Litecoin Core gebunden zu sein. Einzelanwender sollen damit auch Omni-Transaktionen senden
 können, über die Wallet ihres `litecoind`. Details und Phasen: [Plan.md](Plan.md).
 
-**Stand:** Phase 0 bis 5. Der Indexer folgt der Chain ab dem Omni-Genesis-Block und lässt jeden Block
+**Stand:** Phase 0 bis 6. Der Indexer folgt der Chain ab dem Omni-Genesis-Block und lässt jeden Block
 durch OmniLite 0.18.1 selbst laufen: alle Transaktionstypen, Guthaben, Properties, DEx, Crowdsales,
-NFTs, die Sicherung des States und Reorgs. Die API beantwortet die `omni_*`-Aufrufe wie `omnilitecored`.
+NFTs, die Sicherung des States und Reorgs. Die API beantwortet die `omni_*`-Aufrufe wie `omnilitecored`, unbestätigte Omni-Transaktionen aus dem Mempool der Node eingeschlossen.
 Noch nicht gegen einen echten `litecoind` getestet.
 
 ## Voraussetzungen (Linux)
