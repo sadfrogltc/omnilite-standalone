@@ -120,14 +120,15 @@ std::string Config::OmniDataDir() const
     return JoinPath(JoinPath(dataDir, Params().NetworkIDString()), "omnicore");
 }
 
-std::pair<std::string, std::string> Config::Credentials() const
+namespace {
+
+/** user:password from a cookie file; what names the setting that was not given instead. */
+std::pair<std::string, std::string> ReadCookie(const std::string& path, const std::string& what)
 {
-    if (!rpcPassword.empty()) return {rpcUser, rpcPassword};
-    std::string path = rpcCookieFile.empty() ? DefaultCookieFile() : rpcCookieFile;
     std::ifstream file(path);
     std::string cookie;
     if (!file || !std::getline(file, cookie)) {
-        throw ConfigError("no rpcpassword set and cookie file " + path + " is not readable");
+        throw ConfigError("no " + what + " set and cookie file " + path + " is not readable");
     }
     cookie = Trim(cookie);
     size_t colon = cookie.find(':');
@@ -135,6 +136,20 @@ std::pair<std::string, std::string> Config::Credentials() const
         throw ConfigError("cookie file " + path + " has no user:password");
     }
     return {cookie.substr(0, colon), cookie.substr(colon + 1)};
+}
+
+} // namespace
+
+std::pair<std::string, std::string> Config::Credentials() const
+{
+    if (!rpcPassword.empty()) return {rpcUser, rpcPassword};
+    return ReadCookie(rpcCookieFile.empty() ? DefaultCookieFile() : rpcCookieFile, "rpcpassword");
+}
+
+std::pair<std::string, std::string> Config::APICredentials() const
+{
+    if (!apiPassword.empty()) return {apiUser, apiPassword};
+    return ReadCookie(APICookieFile(), "apipassword");
 }
 
 std::string Config::APICookieFile() const
@@ -174,6 +189,8 @@ Config LoadConfig(const std::vector<std::string>& args)
             cfg.help = true;
         } else if (key == "check") {
             cfg.check = true;
+        } else if (key == "status") {
+            cfg.status = true;
         } else if (key == "datadir") {
             cfg.dataDir = value;
         } else if (key == "conf") {
@@ -228,6 +245,8 @@ std::string HelpMessage()
       << "Indexes OmniLite transactions from any litecoind over standard RPC.\n\n"
       << "Options:\n"
       << "  -check              check the node connection and exit\n"
+      << "  -status             show the status of the running program (over its API) and exit;\n"
+      << "                      exit code 0 if it is synced\n"
       << "  -datadir=<dir>      data directory (default: " << DefaultDataDir() << ")\n"
       << "  -conf=<file>        config file (default: <datadir>/" << CONFIG_FILENAME << ")\n"
       << "  -network=<net>      main, test or regtest (default: main)\n"
@@ -246,6 +265,6 @@ std::string HelpMessage()
       << "  -apiport=<port>     API port (default: 9432, test 19432, regtest 19543)\n"
       << "  -apiuser=<user>     API user\n"
       << "  -apipassword=<pw>   API password (default: a new cookie in <datadir>/<net>/.cookie)\n"
-      << "\nEvery option except -check, -datadir and -conf can also be set in the config file.\n";
+      << "\nEvery option except -check, -status, -datadir and -conf can also be set in the config file.\n";
     return s.str();
 }

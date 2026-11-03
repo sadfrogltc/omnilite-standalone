@@ -4,6 +4,8 @@
 
 #include <syncer.h>
 
+#include <status.h>
+
 #include <logging.h>
 #include <rpcclient.h>
 
@@ -69,6 +71,7 @@ Syncer::Syncer(ChainSource& source, CStore& store, Processor& processor, int64_t
     std::chrono::milliseconds poll)
     : m_source(source), m_store(store), m_processor(processor), m_start(startHeight), m_poll(poll)
 {
+    GetSyncStatus().SetTip(m_store.Tip());
 }
 
 bool Syncer::Step()
@@ -76,7 +79,10 @@ bool Syncer::Step()
     std::optional<BlockInfo> tip = m_store.Tip();
     int64_t next = tip ? tip->height + 1 : m_start;
 
-    if (next > m_nodeHeight) m_nodeHeight = m_source.GetBlockCount();
+    if (next > m_nodeHeight) {
+        m_nodeHeight = m_source.GetBlockCount();
+        GetSyncStatus().SetNodeHeight(m_nodeHeight);
+    }
     if (next > m_nodeHeight) {
         // Caught up. Make sure our tip is still the node's block at that
         // height; a reorg to an equally long or shorter chain shows up only here.
@@ -120,6 +126,7 @@ void Syncer::Connect(const BlockHeader& header)
         throw std::runtime_error("block " + std::to_string(header.height) + " " + header.hash + ": " + e.what());
     }
     tx->Commit();
+    GetSyncStatus().SetTip(info);
     auto now = std::chrono::steady_clock::now();
     if (header.height == m_nodeHeight || now - m_lastLog > std::chrono::seconds(10)) {
         m_lastLog = now;
@@ -131,6 +138,8 @@ void Syncer::Disconnect()
 {
     BlockInfo b = m_store.Disconnect();
     m_processor.DisconnectBlock(b);
+    GetSyncStatus().Disconnected(b);
+    GetSyncStatus().SetTip(m_store.Tip());
     LogWarn("block disconnected (reorg): height %d, hash %s", b.height, b.hash);
 }
 
@@ -140,9 +149,11 @@ void Syncer::Run(const std::atomic<bool>& stop)
         bool progressed = false;
         try {
             progressed = Step();
+            GetSyncStatus().NodeAnswered();
         } catch (const NodeError& e) {
             // The node may be restarting or briefly unreachable: keep trying.
             LogWarn("node request failed, retrying: %s", e.what());
+            GetSyncStatus().NodeFailed(e.what());
             m_nodeHeight = -1;
         }
         if (progressed) continue;

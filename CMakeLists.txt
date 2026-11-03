@@ -90,6 +90,7 @@ add_library(omnilite STATIC
   src/nodewallet.cpp
   src/dexguard.cpp
   src/dryrun.cpp
+  src/status.cpp
   src/coreshim/coreshim.cpp
   src/coreshim/policy.cpp
   src/coreshim/rpc/server.cpp
@@ -142,6 +143,7 @@ target_include_directories(omnilite PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMA
 target_include_directories(omnilite SYSTEM PUBLIC ${LEVELDB_INCLUDE_DIR})
 target_link_libraries(omnilite PUBLIC litecoin_core PkgConfig::EVENT PkgConfig::EVENT_PTHREADS ${LEVELDB_LIBRARY})
 target_compile_options(omnilite PRIVATE -Wall -Wextra)
+target_compile_definitions(omnilite PRIVATE OMNILITE_STANDALONE_VERSION="${PROJECT_VERSION}")
 # Code taken from OmniLite: warnings that come from building it without a wallet.
 file(GLOB OMNICORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/omnicore/*.cpp)
 set_source_files_properties(${OMNICORE_SOURCES} PROPERTIES COMPILE_OPTIONS
@@ -203,3 +205,6 @@ file(GLOB OMNICORE_TESTS ${CMAKE_CURRENT_SOURCE_DIR}/test/omnicore/*.cpp)
 set_source_files_properties(${OMNICORE_TESTS} PROPERTIES COMPILE_OPTIONS
   "-Wno-unused-parameter;-Wno-unused-variable;-Wno-dangling-reference;-Wno-sign-compare")
 add_test(NAME unit COMMAND test_omnilite)
+
+# --- Install: the program; the systemd unit is installed by hand (see README) ---
+install(TARGETS omnilite-standalone RUNTIME DESTINATION bin)

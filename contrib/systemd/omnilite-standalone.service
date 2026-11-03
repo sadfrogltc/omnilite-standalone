@@ -1,0 +1,50 @@
+# OmniLite Standalone as a system service. Setup: see README.md, "Als Dienst (systemd)".
+#
+# Runs as the user "omnilite" with its data in /var/lib/omnilite-standalone and
+# its settings in /etc/omnilite-standalone/omnilite-standalone.conf.
+
+[Unit]
+Description=OmniLite Standalone (Omni Layer indexer for litecoind)
+Documentation=https://github.com/tbuuol/omnilite-standalone
+After=network-online.target litecoind.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=omnilite
+Group=omnilite
+ExecStart=/usr/local/bin/omnilite-standalone -datadir=/var/lib/omnilite-standalone -conf=/etc/omnilite-standalone/omnilite-standalone.conf
+
+# SIGTERM ends it cleanly; OmniLite saves its state per block, so a restart goes on from there.
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=120
+
+# /var/lib/omnilite-standalone, owned by omnilite; files only for omnilite (and the group).
+StateDirectory=omnilite-standalone
+StateDirectoryMode=0750
+UMask=0027
+
+# Hardening: it only needs its data directory and the network.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

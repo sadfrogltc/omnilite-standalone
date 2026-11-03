@@ -8,6 +8,8 @@
 
 #include <httprpc.h>
 
+#include <chainparams.h>
+
 #include <rpc/server.h>
 #include <rpcclient.h>
 #include <test/fakelitecoind.h>
@@ -79,6 +81,7 @@ BOOST_AUTO_TEST_SUITE(httprpc_tests)
 BOOST_AUTO_TEST_CASE(warmup)
 {
     BOOST_REQUIRE(RPCIsInWarmup(nullptr));
+    SelectParams("regtest"); // omnilite_getstatus names the network
     RegisterOmniRPCCommands();
     SetRPCWarmupStatus("Loading the Omni state...");
     APIServer api(PasswordOptions(), nullptr);
@@ -89,6 +92,14 @@ BOOST_AUTO_TEST_CASE(warmup)
     UniValue error = find_value(Parse(r.body), "error");
     BOOST_CHECK_EQUAL(find_value(error, "code").get_int(), RPC_IN_WARMUP);
     BOOST_CHECK_EQUAL(find_value(error, "message").get_str(), "Loading the Omni state...");
+
+    // The status answers already, and says what is going on.
+    r = Request(api.Port(), R"({"method":"omnilite_getstatus","params":[],"id":1})");
+    BOOST_CHECK_EQUAL(r.status, 200);
+    UniValue status = find_value(Parse(r.body), "result");
+    BOOST_CHECK(find_value(status, "loading").isTrue());
+    BOOST_CHECK_EQUAL(find_value(status, "loadingstatus").get_str(), "Loading the Omni state...");
+    BOOST_CHECK(find_value(status, "synced").isFalse());
 
     FinishWarmup();
     r = Request(api.Port(), R"({"method":"uptime","params":[],"id":1})");

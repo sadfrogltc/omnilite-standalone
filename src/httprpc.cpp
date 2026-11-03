@@ -9,6 +9,7 @@
 #include <rpc/protocol.h>
 #include <rpc/server.h>
 #include <rpcclient.h>
+#include <status.h>
 #include <util/strencodings.h>
 
 #include <event2/buffer.h>
@@ -48,6 +49,9 @@ void RegisterOmniRPCCommands()
     RegisterOmniPayloadCreationRPCCommands(tableRPC);
     RegisterOmniRawTransactionRPCCommands(tableRPC);
     RegisterOmniTransactionCreationRPCCommands(tableRPC); // through the node's wallet, src/nodewallet.cpp
+    // Listed for help; answered in Execute, also while loading.
+    static const CRPCCommand status{"omnilite", "omnilite_getstatus", &omnilite_getstatus, {}};
+    tableRPC.appendCommand(status.name, &status);
 }
 
 namespace {
@@ -82,6 +86,15 @@ void JSONErrorReply(evhttp_request* req, const UniValue& objError, const UniValu
 /** A command of the table, or one passed on to the node. */
 UniValue Execute(const JSONRPCRequest& jreq, const RPCClient* node)
 {
+    // The status needs neither the loaded state nor cs_main: it answers while
+    // OmniLite loads and while a block is processed.
+    if (jreq.strMethod == "omnilite_getstatus") {
+        try {
+            return omnilite_getstatus(jreq);
+        } catch (const std::exception& e) {
+            throw JSONRPCError(RPC_MISC_ERROR, e.what());
+        }
+    }
     if (tableRPC[jreq.strMethod] == nullptr && node != nullptr && PASSTHROUGH_METHODS.count(jreq.strMethod)) {
         std::string status;
         if (RPCIsInWarmup(&status)) throw JSONRPCError(RPC_IN_WARMUP, status);

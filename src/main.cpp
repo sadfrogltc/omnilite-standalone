@@ -13,8 +13,10 @@
 #include <rpc/server.h>
 #include <rpcclient.h>
 #include <shutdown.h>
+#include <status.h>
 #include <store.h>
 #include <syncer.h>
+#include <util/time.h>
 #include <wallet/wallet.h>
 
 #include <chrono>
@@ -96,6 +98,63 @@ bool RunCheck(const Config& cfg)
     return ok;
 }
 
+std::string FormatDuration(int64_t seconds)
+{
+    const int64_t d = seconds / 86400, h = seconds / 3600 % 24, m = seconds / 60 % 60;
+    if (d > 0) return std::to_string(d) + "d " + std::to_string(h) + "h";
+    if (h > 0) return std::to_string(h) + "h " + std::to_string(m) + "m";
+    return std::to_string(m) + "m " + std::to_string(seconds % 60) + "s";
+}
+
+/** Asks the running program over its API; 0 if it is synced, 1 otherwise. */
+int RunStatus(const Config& cfg)
+{
+    UniValue s;
+    try {
+        std::pair<std::string, std::string> credentials = cfg.APICredentials();
+        // An API listening on all addresses is reached locally.
+        const bool any = cfg.apiBind == "0.0.0.0" || cfg.apiBind == "::";
+        RPCClient api(any ? "127.0.0.1" : cfg.apiBind, cfg.apiPort, credentials.first, credentials.second, 10);
+        s = api.Call("omnilite_getstatus");
+    } catch (const std::exception& e) {
+        Line("Status", std::string("ERROR: not running or not reachable: ") + e.what());
+        return 1;
+    }
+
+    Line("Version", find_value(s, "version").get_str() + " (" + find_value(s, "network").get_str() + ")");
+    const UniValue block = find_value(s, "block");
+    if (block.isNull()) {
+        Line("Omni", "no block yet (starts at " + std::to_string(find_value(s, "startblock").get_int64()) + ")");
+    } else {
+        Line("Omni", "block " + std::to_string(block.get_int64()) + " (" + FormatISO8601DateTime(find_value(s, "blocktime").get_int64()) + ")");
+    }
+    const UniValue nodeBlock = find_value(s, "nodeblock");
+    Line("Node", nodeBlock.isNull() ? "not reached yet" : "block " + std::to_string(nodeBlock.get_int64()) +
+        (find_value(s, "nodeconnected").isTrue() ? "" : " (last seen)"));
+    std::string sync;
+    if (find_value(s, "loading").isTrue()) {
+        sync = "loading: " + find_value(s, "loadingstatus").get_str();
+    } else if (find_value(s, "synced").isTrue()) {
+        sync = "synced";
+    } else if (!find_value(s, "behind").isNull() && find_value(s, "behind").get_int64() > 0) {
+        sync = std::to_string(find_value(s, "behind").get_int64()) + " blocks behind the node";
+    } else {
+        sync = "waiting for the node";
+    }
+    Line("Sync", sync);
+    const UniValue error = find_value(s, "lastnodeerror");
+    if (error.isObject()) {
+        Line(find_value(error, "current").isTrue() ? "Node error" : "Last error",
+            find_value(error, "message").get_str() + " (" + FormatISO8601DateTime(find_value(error, "time").get_int64()) + ")");
+    }
+    const UniValue reorg = find_value(s, "lastreorg");
+    Line("Reorgs", std::to_string(find_value(s, "reorgblocks").get_int64()) + " blocks disconnected since the start" +
+        (reorg.isObject() ? ", last at block " + std::to_string(find_value(reorg, "block").get_int64()) + " (" +
+            FormatISO8601DateTime(find_value(reorg, "time").get_int64()) + ")" : ""));
+    Line("Uptime", FormatDuration(find_value(s, "uptime").get_int64()));
+    return find_value(s, "synced").isTrue() ? 0 : 1;
+}
+
 void HandleSignal(int) { StartShutdown(); }
 
 /** Syncs the index with the node and answers the API until SIGINT, SIGTERM or the stop call. */
@@ -120,6 +179,7 @@ int Run(const Config& cfg)
         }
 
         CStore store(cfg.DBPath(), Params().NetworkIDString(), cfg.undoDepth);
+        GetSyncStatus().SetTip(store.Tip()); // for omnilite_getstatus while OmniLite loads
         RPCChainSource source(node);
         RPCNodeData nodeData(node);
         OmniIndexer processor(nodeData, store);
@@ -205,6 +265,9 @@ int main(int argc, char* argv[])
     }
     if (cfg.check) {
         return RunCheck(cfg) ? 0 : 1;
+    }
+    if (cfg.status) {
+        return RunStatus(cfg);
     }
     return Run(cfg);
 }

@@ -55,6 +55,7 @@ struct Config {
     std::string apiPassword;
 
     bool check = false;
+    bool status = false;
     bool help = false;
 
     /** URL path of the node's RPC endpoint, e.g. http://127.0.0.1:9332. */
@@ -65,6 +66,8 @@ struct Config {
     std::string OmniDataDir() const;
     /** RPC user and password, read from the cookie file when no password is set. */
     std::pair<std::string, std::string> Credentials() const;
+    /** API user and password, read from the API's cookie file when no password is set. */
+    std::pair<std::string, std::string> APICredentials() const;
     /** The API's cookie file: <datadir>/<network>/.cookie. */
     std::string APICookieFile() const;
 };

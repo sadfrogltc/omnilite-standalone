@@ -4,11 +4,15 @@
 
 #include <syncer.h>
 
+#include <rpc/server.h>
+#include <status.h>
+
 #include <test/util.h>
 
 #include <boost/test/unit_test.hpp>
 
 #include <atomic>
+#include <functional>
 #include <thread>
 #include <vector>
 
@@ -199,6 +203,84 @@ BOOST_AUTO_TEST_CASE(run_stops_and_retries)
     stop = true;
     t.join();
     f.CheckMatches(chain);
+}
+
+BOOST_AUTO_TEST_CASE(status_follows_the_syncer)
+{
+    SyncStatus& status = GetSyncStatus();
+    status.Reset();
+    Fixture f;
+    FakeChain chain("a", 11);
+    Syncer s(chain, f.store, f.processor, START, std::chrono::milliseconds(0));
+    BOOST_CHECK(find_value(status.ToJSON(), "block").isNull());
+
+    // One block in: the node is at 10, the index at START.
+    BOOST_REQUIRE(s.Step());
+    UniValue j = status.ToJSON();
+    BOOST_CHECK_EQUAL(find_value(j, "block").get_int64(), START);
+    BOOST_CHECK_EQUAL(find_value(j, "blockhash").get_str(), chain.hashes[START]);
+    BOOST_CHECK_EQUAL(find_value(j, "nodeblock").get_int64(), 10);
+    BOOST_CHECK_EQUAL(find_value(j, "behind").get_int64(), 10 - START);
+    BOOST_CHECK(find_value(j, "synced").isFalse());
+
+    f.SyncAll(chain);
+    j = status.ToJSON();
+    BOOST_CHECK_EQUAL(find_value(j, "block").get_int64(), 10);
+    BOOST_CHECK_EQUAL(find_value(j, "behind").get_int64(), 0);
+    // Synced, unless the API is still loading (only when this test runs alone).
+    BOOST_CHECK_EQUAL(find_value(j, "synced").isTrue(), !RPCIsInWarmup(nullptr));
+    BOOST_CHECK_EQUAL(find_value(j, "reorgblocks").get_int64(), 0);
+    BOOST_CHECK(find_value(j, "lastreorg").isNull());
+
+    // A reorg back to block 7: four blocks disconnected.
+    chain.Fork("b", 7, 13);
+    f.SyncAll(chain);
+    j = status.ToJSON();
+    BOOST_CHECK_EQUAL(find_value(j, "block").get_int64(), 12);
+    BOOST_CHECK_EQUAL(find_value(j, "blockhash").get_str(), chain.hashes[12]);
+    BOOST_CHECK_EQUAL(find_value(j, "reorgblocks").get_int64(), 4);
+    BOOST_CHECK_EQUAL(find_value(find_value(j, "lastreorg"), "block").get_int64(), 7);
+}
+
+BOOST_AUTO_TEST_CASE(status_reports_node_errors)
+{
+    class Down : public FakeChain
+    {
+    public:
+        using FakeChain::FakeChain;
+        std::atomic<bool> down{true};
+        int64_t GetBlockCount() override
+        {
+            if (down) throw NodeError("connection refused");
+            return FakeChain::GetBlockCount();
+        }
+    };
+    SyncStatus& status = GetSyncStatus();
+    status.Reset();
+    Fixture f;
+    Down chain("a", 11);
+    std::atomic<bool> stop{false};
+    Syncer s(chain, f.store, f.processor, START, std::chrono::milliseconds(10));
+    std::thread t([&] { s.Run(stop); });
+    auto wait = [&](const std::function<bool(const UniValue&)>& until) {
+        for (int i = 0; i < 500 && !until(status.ToJSON()); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        return until(status.ToJSON());
+    };
+    // The node is down: a current error, not connected, not synced.
+    BOOST_CHECK(wait([](const UniValue& j) { return find_value(j, "lastnodeerror").isObject(); }));
+    UniValue j = status.ToJSON();
+    BOOST_CHECK_EQUAL(find_value(find_value(j, "lastnodeerror"), "message").get_str(), "connection refused");
+    BOOST_CHECK(find_value(find_value(j, "lastnodeerror"), "current").isTrue());
+    BOOST_CHECK(find_value(j, "nodeconnected").isFalse());
+    BOOST_CHECK(find_value(j, "synced").isFalse());
+    // Back again: the error stays as the last one, no longer current.
+    chain.down = false;
+    BOOST_CHECK(wait([](const UniValue& j) { return !find_value(j, "block").isNull() && find_value(j, "block").get_int64() == 10; }));
+    stop = true;
+    t.join();
+    j = status.ToJSON();
+    BOOST_CHECK(find_value(find_value(j, "lastnodeerror"), "current").isFalse());
+    BOOST_CHECK(find_value(j, "nodeconnected").isTrue());
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -255,8 +255,22 @@ Nach jeder Phase: Build und Unit-Tests unter Linux grün, Commit, Push. Der Abgl
   (auch mit Dry-Run), Send-All ohne Token, doppelter Accept, Class B auf Regtest abgelehnt und auf
   Mainnet-Parametern gebaut und von OmniLite verbucht.
 
+- **Stand Status und systemd:** umgesetzt. Entscheidungen: eigener Aufruf statt Felder in
+  `omni_getinfo` (das bleibt wie bei `omnilitecored`), Systemdienst mit eigenem Benutzer.
+  `omnilite_getstatus` (`src/status.cpp`) meldet Version, Netz, ob OmniLite noch lädt, Omni-Höhe mit
+  Hash und Zeit, Höhe der Node, Rückstand, `synced`, Verbindung zur Node mit letztem Fehler, Reorgs
+  (abgehängte Blöcke seit dem Start, letzter) und Laufzeit. Der Syncer pflegt die Werte; die API
+  beantwortet den Aufruf selbst, ohne Warmup-Sperre und ohne `cs_main`, also auch beim Laden und
+  während ein Block verarbeitet wird. `-status` fragt ihn über das API-Cookie ab und druckt ihn,
+  Exit-Code 0 nur wenn synchron. Die Unit `contrib/systemd/omnilite-standalone.service` läuft als
+  `omnilite`, Daten in `/var/lib/omnilite-standalone`, Konfiguration in `/etc/omnilite-standalone`,
+  mit Sandbox (`ProtectSystem=strict`, `ProtectHome`, keine Capabilities u. a.); geprüft mit
+  `systemd-analyze verify`, aber noch nicht als laufender Dienst. Zugang zur Node per
+  `rpcuser`/`rpcpassword` (`rpcauth` in der `litecoin.conf`), weil der Dienst das Cookie der Node
+  nicht lesen kann. `cmake --install` installiert das Programm.
+
 ### Später
-- Snapshot-Export und -Import, Status-Aufruf (Höhe, Abstand zur Node, Reorgs), systemd-Unit.
+- Snapshot-Export und -Import.
 - Windows erst, wenn Linux stabil und getestet ist.
 
 ---

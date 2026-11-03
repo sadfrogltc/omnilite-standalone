@@ -32,7 +32,13 @@ Mit `-DOMNILITE_SANITIZE=ON` laufen Build und Tests mit AddressSanitizer und Und
 ```bash
 ./build/omnilite-standalone -check   # Verbindung, Chain und txindex prüfen
 ./build/omnilite-standalone          # synchronisieren und API starten (Strg+C beendet)
-```n
+./build/omnilite-standalone -status  # Stand des laufenden Programms (Exit-Code 0, wenn synchron)
+```
+
+`-status` fragt den Aufruf `omnilite_getstatus` der API ab: Omni-Höhe, Höhe der Node, Rückstand,
+letzter Node-Fehler, Reorgs seit dem Start, Laufzeit. Er antwortet auch, während OmniLite noch seinen
+State lädt.
+
 Die API lauscht auf `127.0.0.1:9432` (Testnet 19432, Regtest 19543). Ohne `apipassword` liegt das Login
 im Cookie `~/.omnilite-standalone/<netz>/.cookie`, das z. B. `litecoin-cli` lesen kann:
 
@@ -43,6 +49,39 @@ litecoin-cli -rpcport=9432 -rpccookiefile=$HOME/.omnilite-standalone/main/.cooki
 Konfiguration: `~/.omnilite-standalone/omnilite-standalone.conf`, Vorlage in
 [omnilite-standalone.conf.example](omnilite-standalone.conf.example). Ohne `rpcpassword` wird das Cookie
 von `litecoind` gelesen (`~/.litecoin/.cookie`, bei Testnet und Regtest im Unterordner).
+
+## Als Dienst (systemd)
+
+Die Unit [contrib/systemd/omnilite-standalone.service](contrib/systemd/omnilite-standalone.service)
+startet das Programm beim Booten als eigener Benutzer `omnilite`, mit den Daten in
+`/var/lib/omnilite-standalone`, der Konfiguration in `/etc/omnilite-standalone` und abgeschottet vom
+Rest des Systems (kein Zugriff auf `/home`, sonst nur lesend).
+
+```bash
+sudo cmake --install build --prefix /usr/local
+sudo useradd --system --home-dir /var/lib/omnilite-standalone --shell /usr/sbin/nologin omnilite
+sudo install -d -m 0750 -g omnilite /etc/omnilite-standalone
+sudo install -m 0640 -g omnilite omnilite-standalone.conf.example /etc/omnilite-standalone/omnilite-standalone.conf
+sudoedit /etc/omnilite-standalone/omnilite-standalone.conf
+sudo install -m 0644 contrib/systemd/omnilite-standalone.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now omnilite-standalone
+```
+
+Das Cookie von `litecoind` kann der Dienst nicht lesen (es gehört dem Benutzer der Node, und `/home`
+ist gesperrt). Darum in der Konfiguration `rpcuser` und `rpcpassword` setzen, passend zu einem
+`rpcauth`-Eintrag in der `litecoin.conf` (erzeugt mit `share/rpcauth/rpcauth.py` aus Litecoin Core).
+
+Log und Stand:
+
+```bash
+journalctl -u omnilite-standalone -f
+sudo -u omnilite omnilite-standalone -datadir=/var/lib/omnilite-standalone \
+  -conf=/etc/omnilite-standalone/omnilite-standalone.conf -status
+```
+
+Das API-Cookie liegt dann in `/var/lib/omnilite-standalone/<netz>/.cookie` und ist nur für `omnilite`
+lesbar.
 
 ## Herkunft
 
