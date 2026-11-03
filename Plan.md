@@ -226,6 +226,20 @@ Nach jeder Phase: Build und Unit-Tests unter Linux grün, Commit, Push. Der Abgl
   vor dem Senden abgelehnt. Freezing wirkt sofort: die Wartezeit gilt nur mit dem Feature
   „Freeze-Notice“, das auch auf Mainnet nicht aktiv ist. Issuer-Daten für NFTs sind ebenfalls ein nicht
   aktiviertes Feature und darum nicht getestet.
+- **Stand Phase 9:** umgesetzt. Entscheidungen: Zahlung abgelehnt unter 3 verbleibenden Blöcken im
+  Zahlungsfenster, kein Override. Sell, Accept und Cancel laufen unverändert über OmniLites
+  `rpctx.cpp`; `omni_senddexpay` zahlt nur auf ausdrücklichen Aufruf und hat einen Wächter
+  (`src/dexguard.cpp`), der vor dem Bauen ablehnt, wenn OmniLite hinter der Node liegt (das Restfenster
+  wäre falsch gerechnet), weniger als 3 Blöcke des Fensters bleiben (die Zahlung zählt bis einschließlich
+  Block Accept + Fenster), eine eigene Zahlung für denselben Accept noch unbestätigt ist, oder OmniLite die
+  Zahlung (mit FREEDEX, auf Mainnet ab Genesis aktiv) einem anderen Offer des Verkäufers zuordnen bzw.
+  ohne Offer gar nicht verbuchen würde – ein Cancel lässt offene Accepts stehen. Die signierte Zahlung
+  geht vor dem Senden durch OmniLites Parser und muss als DEx-Zahlung des Käufers erkannt werden; auf
+  Testnet und Regtest ist das nie der Fall (Exodus-Output nur für Mainnet), dort wird jede Zahlung
+  abgelehnt. Überzahlung lehnt OmniLite selbst ab, und jede Zahlung kauft mindestens eine Einheit
+  (OmniLite rundet auf). Getestet auf Mainnet-Parametern: Sell, Accept, Zahlung mit Verbuchung,
+  Doppelzahlung, Rückstand zur Node, Restfenster, Cancel mit offenem Accept, neues Offer für einen
+  anderen Token; auf Regtest die Ablehnung jeder Zahlung.
 
 ### Später
 - Snapshot-Export und -Import, Status-Aufruf (Höhe, Abstand zur Node, Reorgs), systemd-Unit.

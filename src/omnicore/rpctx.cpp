@@ -18,6 +18,10 @@
 #include <omnicore/tx.h>
 #include <omnicore/utilsbitcoin.h>
 #include <omnicore/wallettxbuilder.h>
+
+// omnilite-standalone: the DEx payment guard
+#include <dexguard.h>
+#include <wallet/wallet.h>
 #include <omnicore/walletutils.h>
 
 #include <interfaces/wallet.h>
@@ -868,6 +872,12 @@ static UniValue omni_senddexpay(const JSONRPCRequest& request)
         }
     }
 
+    // omnilite-standalone: the payment guard (src/dexguard.cpp), before anything is built
+    if (!pwallet) {
+        throw JSONRPCError(MP_ERR_WALLET_ACCESS, error_str(MP_ERR_WALLET_ACCESS));
+    }
+    CheckDExPayment(pwallet->wallet(), sellerAddress, propertyId, buyerAddress);
+
     // Set the change address to the sender
     CCoinControl coinControl;
     coinControl.destChange = buyerDest;
@@ -904,11 +914,17 @@ static UniValue omni_senddexpay(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_WALLET_ERROR, strprintf("ERROR: wallet transaction creation failed: %s\n", strFailReason));
     }
 
+    // omnilite-standalone: the signed payment through OmniLite's parser before it is sent
+    CheckDExPaymentTx(wtxNew->get(), buyerAddress);
+
     // Commit the transaction to the wallet and broadcast
     std::string rejectReason;
     if (!wtxNew->commit({}, {}, rejectReason)) {
         throw JSONRPCError(RPC_WALLET_ERROR, strprintf("Error: The transaction was rejected! Reason given: %s", rejectReason));
     }
+
+    // omnilite-standalone: no second payment for this accept while this one is unconfirmed
+    DExPaymentSent(sellerAddress, propertyId, buyerAddress, wtxNew->get().GetHash());
 
     return wtxNew->get().GetHash().GetHex();
 }

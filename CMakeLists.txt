@@ -88,6 +88,7 @@ add_library(omnilite STATIC
   src/logging.cpp
   src/mempool.cpp
   src/nodewallet.cpp
+  src/dexguard.cpp
   src/coreshim/coreshim.cpp
   src/coreshim/policy.cpp
   src/coreshim/rpc/server.cpp

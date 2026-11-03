@@ -27,6 +27,7 @@ Rückkehr zu einem gesicherten State bei Reorgs (`RewindDBsAndState`, `msc_initi
 | `encoding.cpp` | `GetRand(256)` → `std::random_device` (nur die Wahl des letzten Bytes der Class-B-Schlüssel, nicht konsensrelevant) |
 | `rpc.cpp` | `omni_setautocommit`, `omni_listtransactions`, `omni_getwalletbalances`, `omni_getwalletaddressbalances` und die Wallet für `ismine` auch ohne `ENABLE_WALLET`; `getWalletAddresses` fragt die Node-Wallet nach ihren Adressen; `omni_listtransactions` ohne Node leer statt Null-Zeiger |
 | `rpcrawtx.cpp` | Wallet für `ismine` in `omni_decodetransaction` auch ohne `ENABLE_WALLET` |
+| `rpctx.cpp` | `omni_senddexpay` ruft den Zahlungs-Wächter (`src/dexguard.cpp`) vor dem Bauen, vor dem Senden und danach |
 | `walletutils.h`, `wallettxbuilder.h` | `SelectCoins`, `SelectAllCoins`, `CreateFundedTransaction` auch ohne `ENABLE_WALLET` deklariert |
 | `walletutils.cpp`, `walletfetchtxs.cpp` | `IsMyAddress` und `FetchWalletOmniTransactions` auch ohne `ENABLE_WALLET` |
 | `wallettxbuilder.cpp` | nicht übernommen: `WalletTxBuilder` und `CreateFundedTransaction` sind in `src/nodewallet.cpp` über die Wallet der Node neu geschrieben, mit dem Ablauf des Originals |

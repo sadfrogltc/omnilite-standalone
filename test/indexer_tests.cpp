@@ -22,6 +22,7 @@
 #include <test/fakelitecoind.h>
 
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <key_io.h>
 #include <omnicore/activation.h>
@@ -159,9 +160,9 @@ struct Fixture : BasicTestingSetup {
     const CScript alice = ScriptFor(0xa1), bob = ScriptFor(0xb2), carol = ScriptFor(0xc3);
     int64_t start;
 
-    Fixture()
+    explicit Fixture(const std::string& chain = CBaseChainParams::REGTEST)
     {
-        SelectParams(CBaseChainParams::REGTEST);
+        SelectParams(chain);
         start = mastercore::ConsensusParams().GENESIS_BLOCK;
         Open();
     }
@@ -169,7 +170,7 @@ struct Fixture : BasicTestingSetup {
 
     void Open()
     {
-        store = std::make_unique<CStore>(dir.Sub("index"), "regtest", 100);
+        store = std::make_unique<CStore>(dir.Sub("index"), Params().NetworkIDString(), 100);
         indexer = std::make_unique<OmniIndexer>(node, *store);
         indexer->Start(dir.Sub("omnicore"), OmniOptions());
     }
@@ -211,6 +212,11 @@ struct Fixture : BasicTestingSetup {
     {
         return GetTokenBalance(AddressOf(who), property, BALANCE);
     }
+};
+
+/** On mainnet: only there OmniLite sees DEx payments (its Exodus output is the mainnet one). */
+struct MainFixture : Fixture {
+    MainFixture() : Fixture(CBaseChainParams::MAIN) {}
 };
 
 } // namespace
@@ -364,6 +370,8 @@ struct FakeWallet {
     bool locked = false;
     /** As a node without the wallet asked for. */
     bool noWallet = false;
+    /** The node's height (getblockcount). */
+    std::atomic<int64_t> blockCount{0};
 
     static UniValue Error(int code, const std::string& message)
     {
@@ -381,7 +389,9 @@ struct FakeWallet {
             error = Error(RPC_WALLET_NOT_FOUND, "Requested wallet does not exist or is not loaded");
             return true;
         }
-        if (method == "listreceivedbyaddress") {
+        if (method == "getblockcount") {
+            result = UniValue(static_cast<int64_t>(blockCount));
+        } else if (method == "listreceivedbyaddress") {
             result = UniValue(UniValue::VARR);
             for (const std::string& a : mine) {
                 UniValue r(UniValue::VOBJ);
@@ -472,6 +482,46 @@ struct FakeWallet {
             return false;
         }
         return true;
+    }
+};
+
+/** The API with a node wallet behind it that holds 5 LTC for each of the given scripts. */
+struct WalletAPI {
+    FakeWallet wallet;
+    FakeLitecoind litecoind;
+    RPCClient nodeRPC{"127.0.0.1", litecoind.port, "user", "pass", 10};
+    std::unique_ptr<APIServer> api;
+    std::unique_ptr<RPCClient> client;
+
+    WalletAPI(FakeNode& node, std::initializer_list<const CScript*> funded)
+    {
+        for (const CScript* who : funded) {
+            wallet.mine.insert(AddressOf(*who));
+            const COutPoint coin = node.Fund(*who, 5 * COIN);
+            wallet.coins.push_back({coin, node.txs[coin.hash]->vout[0], AddressOf(*who)});
+        }
+        litecoind.handler = [this](const std::string& m, const UniValue& p, const std::string& u, UniValue& r, UniValue& e) { return wallet.Handle(m, p, u, r, e); };
+        RegisterOmniRPCCommands();
+        if (RPCIsInWarmup(nullptr)) SetRPCWarmupFinished();
+        SetWalletNode(&nodeRPC);
+        APIOptions options;
+        options.user = "u";
+        options.password = "p";
+        api = std::make_unique<APIServer>(options, &nodeRPC);
+        api->Start();
+        client = std::make_unique<RPCClient>("127.0.0.1", api->Port(), "u", "p", 10);
+    }
+    ~WalletAPI()
+    {
+        api.reset();
+        SetWalletNode(nullptr);
+    }
+
+    UniValue Call(const std::string& method, std::vector<UniValue> args)
+    {
+        UniValue params(UniValue::VARR);
+        for (const UniValue& a : args) params.push_back(a);
+        return client->Call(method, params);
     }
 };
 
@@ -949,6 +999,117 @@ BOOST_AUTO_TEST_CASE(token_management_through_the_api)
     BOOST_CHECK_EQUAL(find_value(sendAndMine("omni_sendanydata", {UniValue(A), UniValue("68656c6c6f")}), "data").get_str(), "68656c6c6f");
 
     SetWalletNode(nullptr);
+}
+
+namespace {
+
+/** Whether the call fails with a message that contains text. */
+bool FailsWith(const std::function<void()>& call, const std::string& text)
+{
+    try {
+        call();
+    } catch (const RPCError& e) {
+        BOOST_TEST_MESSAGE(e.message);
+        return e.message.find(text) != std::string::npos;
+    }
+    return false;
+}
+
+} // namespace
+
+BOOST_FIXTURE_TEST_CASE(dex_sell_accept_pay_with_the_guard, MainFixture)
+{
+    const std::string A = AddressOf(alice), B = AddressOf(bob);
+    // alice issues properties 3 and 4.
+    Connect("d0", start, {
+        node.OmniTx(alice, CreatePayload_IssuanceFixed(1, MSC_PROPERTY_TYPE_DIVISIBLE, 0, "Games", "", "Coin", "", "", 1000 * COIN)),
+        node.OmniTx(alice, CreatePayload_IssuanceFixed(1, MSC_PROPERTY_TYPE_DIVISIBLE, 0, "Games", "", "Other", "", "", 1000 * COIN))});
+    int64_t height = start + 1;
+    WalletAPI w(node, {&alice, &bob});
+    w.wallet.blockCount = start;
+    auto mine = [&](std::vector<CTransactionRef> txs) {
+        Connect(strprintf("d%d", height), height, txs);
+        w.wallet.blockCount = height;
+        return height++;
+    };
+    auto sendAndMine = [&](const std::string& method, std::vector<UniValue> args) {
+        BOOST_TEST_CHECKPOINT(method);
+        const size_t before = w.wallet.sent.size();
+        w.Call(method, args);
+        BOOST_REQUIRE_EQUAL(w.wallet.sent.size(), before + 1);
+        const int64_t block = mine({w.wallet.sent.back()});
+        BOOST_CHECK_MESSAGE(find_value(w.Call("omni_gettransaction", {UniValue(w.wallet.sent.back()->GetHash().GetHex())}), "valid").isTrue(), method);
+        return block;
+    };
+    auto pay = [&](const std::string& seller, int property, const std::string& amount) {
+        return w.Call("omni_senddexpay", {UniValue(B), UniValue(seller), UniValue(property), UniValue(amount)});
+    };
+
+    // alice sells 10 of property 3 for 1 LTC, payment window 10 blocks; bob accepts 4.
+    sendAndMine("omni_senddexsell", {UniValue(A), UniValue(3), UniValue("10"), UniValue("1"), UniValue(10), UniValue("0.0001"), UniValue(1)});
+    BOOST_CHECK_EQUAL(w.Call("omni_getactivedexsells", {}).size(), 1u);
+    sendAndMine("omni_senddexaccept", {UniValue(B), UniValue(A), UniValue(3), UniValue("4")});
+    BOOST_CHECK_EQUAL(Balance(alice, 3), 990 * COIN); // 10 reserved for the offer
+    const size_t sent = w.wallet.sent.size();
+
+    // OmniLite behind the node: the window would be counted wrong.
+    w.wallet.blockCount = height;
+    BOOST_CHECK(FailsWith([&] { pay(A, 3, "0.4"); }, "caught up"));
+    w.wallet.blockCount = height - 1;
+
+    // The payment, then no second one while it is unconfirmed.
+    const std::string txid = pay(A, 3, "0.4").get_str();
+    BOOST_REQUIRE_EQUAL(w.wallet.sent.size(), sent + 1);
+    BOOST_CHECK(FailsWith([&] { pay(A, 3, "0.4"); }, "still unconfirmed"));
+    mine({w.wallet.sent.back()});
+    BOOST_CHECK_EQUAL(Balance(bob, 3), 4 * COIN);
+    UniValue payment = w.Call("omni_gettransaction", {UniValue(txid)});
+    BOOST_CHECK_EQUAL(find_value(payment, "type").get_str(), "DEx Purchase");
+    BOOST_CHECK(find_value(find_value(payment, "purchases")[0], "valid").isTrue());
+
+    // A second accept, left until only 2 blocks of its window remain.
+    const int64_t accepted2 = sendAndMine("omni_senddexaccept", {UniValue(B), UniValue(A), UniValue(3), UniValue("2")});
+    while (height <= accepted2 + 8) mine({});
+    BOOST_CHECK(FailsWith([&] { pay(A, 3, "0.2"); }, "Only 2 block(s) of the payment window left"));
+
+    // Once accept 2 has run out, a third one; then alice cancels her offer. The
+    // accept stays, but OmniLite (free DEx) would not book a payment any more.
+    while (height <= accepted2 + 10) mine({});
+    sendAndMine("omni_senddexaccept", {UniValue(B), UniValue(A), UniValue(3), UniValue("1")});
+    sendAndMine("omni_senddexsell", {UniValue(A), UniValue(3), UniValue("0"), UniValue("0"), UniValue(0), UniValue("0"), UniValue(3)});
+    BOOST_CHECK(FailsWith([&] { pay(A, 3, "0.1"); }, "no offer anymore"));
+    // Her new offer for property 4 would take a payment meant for property 3.
+    sendAndMine("omni_senddexsell", {UniValue(A), UniValue(4), UniValue("5"), UniValue("1"), UniValue(10), UniValue("0.0001"), UniValue(1)});
+    BOOST_CHECK(FailsWith([&] { pay(A, 3, "0.1"); }, "now offers property 4"));
+
+    // None of the refused payments went out.
+    BOOST_CHECK_EQUAL(w.wallet.sent.back()->GetHash().GetHex(), node.blocks[Hash(strprintf("d%d", height - 1))][0]->GetHash().GetHex());
+}
+
+BOOST_AUTO_TEST_CASE(dex_payment_refused_where_omnilite_cannot_see_it)
+{
+    // Regtest: without free DEx only OMNI is sold; alice gets some directly.
+    const std::string A = AddressOf(alice), B = AddressOf(bob);
+    Connect("r0", start, {});
+    {
+        LOCK(cs_tally);
+        BOOST_REQUIRE(mastercore::update_tally_map(A, OMNI_PROPERTY_MSC, 100 * COIN, BALANCE));
+    }
+    int64_t height = start + 1;
+    WalletAPI w(node, {&alice, &bob});
+    w.wallet.blockCount = start;
+    auto sendAndMine = [&](const std::string& method, std::vector<UniValue> args) {
+        w.Call(method, args);
+        Connect(strprintf("r%d", height), height, {w.wallet.sent.back()});
+        w.wallet.blockCount = height++;
+    };
+    sendAndMine("omni_senddexsell", {UniValue(A), UniValue(1), UniValue("10"), UniValue("1"), UniValue(10), UniValue("0.0001"), UniValue(1)});
+    sendAndMine("omni_senddexaccept", {UniValue(B), UniValue(A), UniValue(1), UniValue("4")});
+    const size_t sent = w.wallet.sent.size();
+
+    // The Exodus output of regtest is P2SH: OmniLite would never see the payment.
+    BOOST_CHECK(FailsWith([&] { w.Call("omni_senddexpay", {UniValue(B), UniValue(A), UniValue(1), UniValue("0.4")}); }, "never seen"));
+    BOOST_CHECK_EQUAL(w.wallet.sent.size(), sent);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
