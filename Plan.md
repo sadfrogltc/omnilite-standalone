@@ -240,6 +240,20 @@ Nach jeder Phase: Build und Unit-Tests unter Linux grün, Commit, Push. Der Abgl
   (OmniLite rundet auf). Getestet auf Mainnet-Parametern: Sell, Accept, Zahlung mit Verbuchung,
   Doppelzahlung, Rückstand zur Node, Restfenster, Cancel mit offenem Accept, neues Offer für einen
   anderen Token; auf Regtest die Ablehnung jeder Zahlung.
+- **Stand Pflicht-Probelauf:** umgesetzt (`src/dryrun.cpp`). Jede Omni-Tx, die `WalletTxBuilder` oder
+  `CreateFundedTransaction` gebaut und signiert hat, geht vor dem Senden (und vor der Rückgabe bei
+  `omni_setautocommit false`) durch OmniLites Parser und Logik wie im nächsten Block: Sie muss als
+  Omni-Tx erkannt werden, mit dem gewünschten Absender und Empfänger, und OmniLites Logik muss sie
+  annehmen. Sonst wird sie nicht gesendet; die Fehlermeldung nennt OmniLites Code und dessen
+  „rejected“-Zeile. Dafür hat `CMPTransaction` einen Schalter `dryRun`: jede Logik-Funktion endet an
+  der Stelle, wo OmniLite vom Prüfen zum Buchen übergeht, mit „gültig“; bei Sell Offer und Accept,
+  deren Prüfungen in `dex.cpp` mit dem Buchen verwoben sind, prüft `dryrun.cpp` dieselben
+  Bedingungen lesend nach. Im normalen Blockablauf ist der Schalter aus. Nicht abgedeckt: die
+  Reihenfolge mit anderen unbestätigten Txs, Activations/Alerts (sendet die API nicht). Dabei
+  aufgefallen: Class-B-Txs (Payload zu groß für OP_RETURN) sieht OmniLite auf Testnet und Regtest
+  nicht; sie werden dort jetzt abgelehnt statt verloren. Getestet: Freeze ohne aktiviertes Freezing
+  (auch mit Dry-Run), Send-All ohne Token, doppelter Accept, Class B auf Regtest abgelehnt und auf
+  Mainnet-Parametern gebaut und von OmniLite verbucht.
 
 ### Später
 - Snapshot-Export und -Import, Status-Aufruf (Höhe, Abstand zur Node, Reorgs), systemd-Unit.

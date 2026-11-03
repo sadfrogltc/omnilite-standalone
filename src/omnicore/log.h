@@ -11,6 +11,10 @@
 #include <logging.h>
 
 #include <string>
+#include <vector>
+
+/** While set, PrintToLog also collects its lines here, for this thread (the dry run, src/dryrun.cpp). */
+extern thread_local std::vector<std::string>* g_omniLogCapture;
 
 extern bool msc_debug_parser_data;
 extern bool msc_debug_parser_readonly;
@@ -50,6 +54,7 @@ inline int PrintToLog(const char* fmt, const Args&... args)
 {
     std::string s = tfm::format(fmt, args...);
     if (!s.empty() && s.back() == '\n') s.pop_back();
+    if (g_omniLogCapture) g_omniLogCapture->push_back(s);
     LogLine(LogLevel::Debug, s);
     return static_cast<int>(s.size());
 }

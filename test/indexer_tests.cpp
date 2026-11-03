@@ -626,8 +626,8 @@ BOOST_AUTO_TEST_CASE(send_through_the_node_wallet)
     BOOST_CHECK_EXCEPTION(send(client, AddressOf(bob), "1"), RPCError,
         [](const RPCError& e) { return e.code == MP_ERR_CREATE_TX && e.message.find("Insufficient funds") != std::string::npos; });
 
-    // A payload too large for OP_RETURN goes out as Class B: Exodus output and
-    // multisig outputs with the wallet's public key of alice.
+    // A payload too large for OP_RETURN would go out as Class B, which OmniLite
+    // does not see on regtest (Exodus is P2SH there): the dry run stops it.
     wallet.coins = {{node.Fund(alice, 1 * COIN), CTxOut(1 * COIN, alice), AddressOf(alice)}};
     {
         UniValue params(UniValue::VARR);
@@ -641,19 +641,11 @@ BOOST_AUTO_TEST_CASE(send_through_the_node_wallet)
         params.push_back("");
         params.push_back(std::string(150, 'x'));
         params.push_back("10");
-        client.Call("omni_sendissuancefixed", params);
+        const size_t sentBefore = wallet.sent.size();
+        BOOST_CHECK_EXCEPTION(client.Call("omni_sendissuancefixed", params), RPCError,
+            [](const RPCError& e) { return e.message.find("would not see this as an Omni transaction") != std::string::npos; });
+        BOOST_CHECK_EQUAL(wallet.sent.size(), sentBefore);
     }
-    CTransactionRef classB = wallet.sent.back();
-    int multisig = 0, exodus = 0;
-    for (const CTxOut& out : classB->vout) {
-        txnouttype type;
-        std::vector<std::vector<unsigned char>> solutions;
-        type = Solver(out.scriptPubKey, solutions);
-        if (type == TX_MULTISIG) ++multisig;
-        if (out.scriptPubKey == GetScriptForDestination(ExodusAddress())) ++exodus;
-    }
-    BOOST_CHECK_GE(multisig, 1);
-    BOOST_CHECK_EQUAL(exodus, 1);
 
     // omni_funded_send: the tokens' owner sends, a second address pays the fee
     // and gets the change. Sender's inputs first, change output first.
@@ -1110,6 +1102,77 @@ BOOST_AUTO_TEST_CASE(dex_payment_refused_where_omnilite_cannot_see_it)
     // The Exodus output of regtest is P2SH: OmniLite would never see the payment.
     BOOST_CHECK(FailsWith([&] { w.Call("omni_senddexpay", {UniValue(B), UniValue(A), UniValue(1), UniValue("0.4")}); }, "never seen"));
     BOOST_CHECK_EQUAL(w.wallet.sent.size(), sent);
+}
+
+BOOST_AUTO_TEST_CASE(dry_run_stops_what_omnilite_would_reject)
+{
+    // Cases OmniLite's own call checks let through, its logic would reject.
+    const std::string A = AddressOf(alice), B = AddressOf(bob);
+    Connect("v0", start, {node.OmniTx(alice, CreatePayload_IssuanceManaged(1, MSC_PROPERTY_TYPE_DIVISIBLE, 0, "Games", "", "Managed", "", ""))});
+    {
+        LOCK(cs_tally);
+        BOOST_REQUIRE(mastercore::update_tally_map(A, OMNI_PROPERTY_MSC, 100 * COIN, BALANCE));
+    }
+    int64_t height = start + 1;
+    WalletAPI w(node, {&alice, &bob});
+    auto refused = [&](const std::string& method, std::vector<UniValue> args, const std::string& reason) {
+        const size_t before = w.wallet.sent.size();
+        const bool failed = FailsWith([&] { w.Call(method, args); }, reason);
+        return failed && w.wallet.sent.size() == before;
+    };
+    auto sendAndMine = [&](const std::string& method, std::vector<UniValue> args) {
+        w.Call(method, args);
+        Connect(strprintf("v%d", height), height, {w.wallet.sent.back()});
+        ++height;
+    };
+
+    // Freezing is not enabled for property 3.
+    BOOST_CHECK(refused("omni_sendfreeze", {UniValue(A), UniValue(B), UniValue(3), UniValue("1")}, "freezing is not enabled"));
+    // Also when only asked for the signed transaction (omni_setautocommit false).
+    UniValue off;
+    off.setBool(false);
+    w.Call("omni_setautocommit", {off});
+    BOOST_CHECK(refused("omni_sendfreeze", {UniValue(A), UniValue(B), UniValue(3), UniValue("1")}, "freezing is not enabled"));
+    UniValue on;
+    on.setBool(true);
+    w.Call("omni_setautocommit", {on});
+    // bob has no tokens to send.
+    BOOST_CHECK(refused("omni_sendall", {UniValue(B), UniValue(A), UniValue(1)}, "no tokens to send"));
+
+    // A second accept of the same offer by the same buyer.
+    sendAndMine("omni_senddexsell", {UniValue(A), UniValue(1), UniValue("10"), UniValue("1"), UniValue(10), UniValue("0.0001"), UniValue(1)});
+    sendAndMine("omni_senddexaccept", {UniValue(B), UniValue(A), UniValue(1), UniValue("4")});
+    BOOST_CHECK(refused("omni_senddexaccept", {UniValue(B), UniValue(A), UniValue(1), UniValue("1")}, "already exists"));
+
+    // What OmniLite accepts still goes out.
+    sendAndMine("omni_sendenablefreezing", {UniValue(A), UniValue(3)});
+    BOOST_CHECK(mastercore::isFreezingEnabled(3, height));
+}
+
+/** Class B: the Exodus output OmniLite knows is the mainnet one. */
+BOOST_FIXTURE_TEST_CASE(class_b_on_mainnet, MainFixture)
+{
+    const std::string A = AddressOf(alice);
+    Connect("b0", start, {});
+    WalletAPI w(node, {&alice});
+    // Too large for OP_RETURN: Exodus output and multisig outputs with alice's public key from the wallet.
+    w.Call("omni_sendissuancefixed", {UniValue(A), UniValue(1), UniValue(MSC_PROPERTY_TYPE_DIVISIBLE), UniValue(0),
+        UniValue("Games"), UniValue(""), UniValue("Big"), UniValue(""), UniValue(std::string(150, 'x')), UniValue("10")});
+    BOOST_REQUIRE_EQUAL(w.wallet.sent.size(), 1u);
+    CTransactionRef classB = w.wallet.sent.back();
+    int multisig = 0, exodus = 0;
+    for (const CTxOut& out : classB->vout) {
+        std::vector<std::vector<unsigned char>> solutions;
+        if (Solver(out.scriptPubKey, solutions) == TX_MULTISIG) ++multisig;
+        if (out.scriptPubKey == GetScriptForDestination(ExodusAddress())) ++exodus;
+    }
+    BOOST_CHECK_GE(multisig, 1);
+    BOOST_CHECK_EQUAL(exodus, 1);
+
+    // OmniLite books it.
+    Connect("b1", start + 1, {classB});
+    BOOST_CHECK_EQUAL(Balance(alice, 3), 10 * COIN);
+    BOOST_CHECK_EQUAL(find_value(w.Call("omni_getproperty", {UniValue(3)}), "data").get_str(), std::string(150, 'x'));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

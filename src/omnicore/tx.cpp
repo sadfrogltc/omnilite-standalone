@@ -835,8 +835,10 @@ int CMPTransaction::interpretPacket()
     uint256 blockHash;
     {
         LOCK(cs_main);
-        pindex = chainActive[block];
-        blockHash = chainActive[block]->GetBlockHash();
+        // omnilite-standalone: a dry run is for the next block, not yet in the chain; the tip stands in
+        pindex = dryRun ? chainActive.Tip() : chainActive[block];
+        if (pindex == nullptr) return (PKT_ERROR -1);
+        blockHash = pindex->GetBlockHash();
     }
 
     LOCK(cs_tally);
@@ -844,6 +846,11 @@ int CMPTransaction::interpretPacket()
     if (isAddressFrozen(sender, property)) {
         PrintToLog("%s(): REJECTED: address %s is frozen for property %d\n", __func__, sender, property);
         return (PKT_ERROR -3);
+    }
+
+    // omnilite-standalone: dry run: activations, deactivations and alerts are not checked
+    if (dryRun && (type == OMNICORE_MESSAGE_TYPE_DEACTIVATION || type == OMNICORE_MESSAGE_TYPE_ACTIVATION || type == OMNICORE_MESSAGE_TYPE_ALERT)) {
+        return 0;
     }
 
     switch (type) {
@@ -1033,6 +1040,7 @@ int CMPTransaction::logicMath_SimpleSend(uint256& blockHash)
     }
 
     // ------------------------------------------
+    if (dryRun) return 0; // omnilite-standalone: dry run, nothing is booked
 
     // Move the tokens
     assert(update_tally_map(sender, property, -nValue, BALANCE));
@@ -1136,6 +1144,7 @@ int CMPTransaction::logicMath_SendToOwners()
     }
 
     // ------------------------------------------
+    if (dryRun) return 0; // omnilite-standalone: dry run, nothing is booked
 
     assert(update_tally_map(sender, feeProperty, -transferFee, BALANCE));
 
@@ -1224,6 +1233,7 @@ int CMPTransaction::logicMath_SendAll()
         int64_t moneyAvailable = ptally->getMoney(propertyId, BALANCE);
         if (moneyAvailable > 0) {
             ++numberOfPropertiesSent;
+            if (dryRun) continue; // omnilite-standalone: dry run, only counted
             assert(update_tally_map(sender, propertyId, -moneyAvailable, BALANCE));
             assert(update_tally_map(receiver, propertyId, moneyAvailable, BALANCE));
             pDbTransactionList->recordSendAllSubRecord(txid, numberOfPropertiesSent, propertyId, moneyAvailable);
@@ -1306,6 +1316,7 @@ int CMPTransaction::logicMath_SendNonFungible()
     }
 
     // ------------------------------------------
+    if (dryRun) return 0; // omnilite-standalone: dry run, nothing is booked
 
     // Special case: if can't find the receiver -- assume send to self!
     if (receiver.empty()) {
@@ -1353,6 +1364,7 @@ int CMPTransaction::logicMath_TradeOffer()
     }
 
     // ------------------------------------------
+    if (dryRun) return dryRun_TradeOffer(); // omnilite-standalone: dry run, the checks of dex.cpp without booking
 
     int rc = PKT_ERROR_TRADEOFFER;
 
@@ -1449,6 +1461,7 @@ int CMPTransaction::logicMath_AcceptOffer_BTC()
     }
 
     // ------------------------------------------
+    if (dryRun) return dryRun_AcceptOffer(); // omnilite-standalone: dry run, the checks of dex.cpp without booking
 
     // the min fee spec requirement is checked in the following function
     int rc = DEx_acceptCreate(sender, receiver, property, nValue, block, tx_fee_paid, &nNewValue);
@@ -1496,6 +1509,7 @@ int CMPTransaction::logicMath_CreatePropertyFixed(CBlockIndex* pindex)
     }
 
     // ------------------------------------------
+    if (dryRun) return 0; // omnilite-standalone: dry run, nothing is booked
 
     CMPSPInfo::Entry newSP;
     newSP.issuer = sender;
@@ -1585,6 +1599,7 @@ int CMPTransaction::logicMath_CreatePropertyVariable(CBlockIndex* pindex)
     }
 
     // ------------------------------------------
+    if (dryRun) return 0; // omnilite-standalone: dry run, nothing is booked
 
     CMPSPInfo::Entry newSP;
     newSP.issuer = sender;
@@ -1656,6 +1671,7 @@ int CMPTransaction::logicMath_CloseCrowdsale(CBlockIndex* pindex)
     }
 
     // ------------------------------------------
+    if (dryRun) return 0; // omnilite-standalone: dry run, nothing is booked
 
     CMPSPInfo::Entry sp;
     assert(pDbSpInfo->getSP(property, sp));
@@ -1720,6 +1736,7 @@ int CMPTransaction::logicMath_CreatePropertyManaged(CBlockIndex* pindex)
     }
 
     // ------------------------------------------
+    if (dryRun) return 0; // omnilite-standalone: dry run, nothing is booked
 
     CMPSPInfo::Entry newSP;
     newSP.issuer = sender;
@@ -1807,6 +1824,7 @@ int CMPTransaction::logicMath_GrantTokens(CBlockIndex* pindex)
     }
 
     // ------------------------------------------
+    if (dryRun) return 0; // omnilite-standalone: dry run, nothing is booked
 
     std::vector<int64_t> dataPt;
     dataPt.push_back(nValue);
@@ -1885,6 +1903,7 @@ int CMPTransaction::logicMath_RevokeTokens(CBlockIndex* pindex)
     }
 
     // ------------------------------------------
+    if (dryRun) return 0; // omnilite-standalone: dry run, nothing is booked
 
     std::vector<int64_t> dataPt;
     dataPt.push_back(0);
@@ -1951,6 +1970,7 @@ int CMPTransaction::logicMath_ChangeIssuer(CBlockIndex* pindex)
     }
 
     // ------------------------------------------
+    if (dryRun) return 0; // omnilite-standalone: dry run, nothing is booked
 
     sp.updateIssuer(block, tx_idx, receiver);
 
@@ -2011,6 +2031,7 @@ int CMPTransaction::logicMath_EnableFreezing(CBlockIndex* pindex)
         liveBlock = params.OMNI_FREEZE_WAIT_PERIOD + block;
     }
 
+    if (dryRun) return 0; // omnilite-standalone: dry run, nothing is booked
     enableFreezing(property, liveBlock);
 
     return 0;
@@ -2057,6 +2078,7 @@ int CMPTransaction::logicMath_DisableFreezing(CBlockIndex* pindex)
         return (PKT_ERROR_TOKENS -47);
     }
 
+    if (dryRun) return 0; // omnilite-standalone: dry run, nothing is booked
     disableFreezing(property);
 
     return 0;
@@ -2108,6 +2130,7 @@ int CMPTransaction::logicMath_FreezeTokens(CBlockIndex* pindex)
         return (PKT_ERROR_TOKENS -50);
     }
 
+    if (dryRun) return 0; // omnilite-standalone: dry run, nothing is booked
     freezeAddress(receiver, property);
 
     return 0;
@@ -2159,6 +2182,7 @@ int CMPTransaction::logicMath_UnfreezeTokens(CBlockIndex* pindex)
         return (PKT_ERROR_TOKENS -48);
     }
 
+    if (dryRun) return 0; // omnilite-standalone: dry run, nothing is booked
     unfreezeAddress(receiver, property);
 
     return 0;
@@ -2255,6 +2279,7 @@ int CMPTransaction::logicMath_NonFungibleData()
     }
 
     // ------------------------------------------
+    if (dryRun) return 0; // omnilite-standalone: dry run, nothing is booked
 
     pDbNFT->ChangeNonFungibleTokenData(property, nonfungible_token_start, nonfungible_token_end, nonfungible_data, type);
 

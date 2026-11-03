@@ -95,6 +95,13 @@ private:
     // Indicates whether the transaction can be used to execute logic
     bool rpcOnly;
 
+    // omnilite-standalone: the logic checks everything but books nothing (src/dryrun.cpp)
+    bool dryRun = false;
+    // omnilite-standalone: the checks of DEx_offerCreate/Update/Destroy and
+    // DEx_acceptCreate (dex.cpp), which book while checking (src/dryrun.cpp)
+    int dryRun_TradeOffer();
+    int dryRun_AcceptOffer();
+
     /** Checks whether a pointer to the payload is past it's last position. */
     bool isOverrun(const char* p);
 
@@ -293,6 +300,9 @@ public:
 
     /** Enables access of interpretPacket. */
     void unlockLogic() { rpcOnly = false; };
+
+    /** omnilite-standalone: interpretPacket only checks, nothing is booked. */
+    void setDryRun() { dryRun = true; }
 
     /** Compares transaction objects based on block height and position within the block. */
     bool operator<(const CMPTransaction& other) const

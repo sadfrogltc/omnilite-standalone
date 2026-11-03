@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+thread_local std::vector<std::string>* g_omniLogCapture = nullptr;
+
 bool msc_debug_parser_data        = 0;
 bool msc_debug_parser_readonly    = 0;
 //! Print information to potential DEx payments and outputs

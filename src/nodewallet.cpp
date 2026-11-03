@@ -15,6 +15,7 @@
 
 #include <chain.h>
 #include <core_io.h>
+#include <dryrun.h>
 #include <interfaces/wallet.h>
 #include <key_io.h>
 #include <logging.h>
@@ -520,6 +521,9 @@ int WalletTxBuilder(
     auto wtxNew = iWallet->createTransaction(vecRecipients, coinControl, true /* sign */, nChangePosInOut, nFeeRet, strFailReason, false, minFee);
     if (!wtxNew) ThrowWithReason(MP_ERR_CREATE_TX, strFailReason);
 
+    // Not as in OmniLite: what OmniLite would reject is not sent (and not returned).
+    CheckOmniTxBeforeSend(wtxNew->get(), senderAddress, receiverAddress);
+
     // If this request is only to create, but not commit the transaction then display it and exit
     if (!commit) {
         retRawTx = EncodeHexTx(wtxNew->get());
@@ -616,6 +620,8 @@ int CreateFundedTransaction(
     }
 
     CTransactionRef tx = MakeTransactionRef(wallet.Sign(mtx));
+    // Not as in OmniLite: what OmniLite would reject is not sent.
+    CheckOmniTxBeforeSend(*tx, senderAddress, receiverAddress != feeAddress ? receiverAddress : "");
     std::string rejectReason;
     if (!wallet.Send(*tx, rejectReason)) ThrowWithReason(MP_ERR_COMMIT_TX, rejectReason);
     mempool.Add(tx->GetHash());
