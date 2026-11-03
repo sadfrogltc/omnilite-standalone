@@ -19,6 +19,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 
+#include <functional>
 #include <string>
 #include <thread>
 
@@ -56,8 +57,15 @@ public:
     }
     int port = 0;
 
+    /**
+     * Answers before the built-in replies, if set and it returns true: the
+     * method, its params and the request path in, the result or an error
+     * object ({code, message}) out. Runs on the server's thread.
+     */
+    std::function<bool(const std::string& method, const UniValue& params, const std::string& uri, UniValue& result, UniValue& error)> handler;
+
 private:
-    static void Handle(evhttp_request* req, void*)
+    static void Handle(evhttp_request* req, void* self)
     {
         evkeyvalq* in = evhttp_request_get_input_headers(req);
         const char* auth = evhttp_find_header(in, "Authorization");
@@ -74,7 +82,13 @@ private:
         std::string method = find_value(request, "method").get_str();
         UniValue reply(UniValue::VOBJ);
         int status = 200;
-        if (method == "fail") {
+        UniValue result, error;
+        FakeLitecoind* fake = static_cast<FakeLitecoind*>(self);
+        if (fake->handler && fake->handler(method, find_value(request, "params"), evhttp_request_get_uri(req), result, error)) {
+            reply.pushKV("result", error.isNull() ? result : NullUniValue);
+            reply.pushKV("error", error);
+            if (!error.isNull()) status = 500;
+        } else if (method == "fail") {
             UniValue error(UniValue::VOBJ);
             error.pushKV("code", -5);
             error.pushKV("message", "No such mempool or blockchain transaction");

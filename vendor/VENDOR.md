@@ -9,7 +9,7 @@ denen unter `src/` im Original. Lizenz: MIT, siehe `core/COPYING`, `core/univalu
 
 - Grundlagen: `amount.h`, `attributes.h`, `tinyformat.h`, `prevector.h`, `span.h`, `serialize.h`,
   `streams.h`, `version.h`, `uint256`, `arith_uint256`, `compat/endian.h`, `compat/byteswap.h`,
-  `support/cleanse`, `support/allocators/zeroafterfree.h`, `util/strencodings`
+  `support/cleanse`, `support/allocators/zeroafterfree.h`, `util/strencodings`, `util/moneystr`
 - Hashes: `hash`, `crypto/common.h`, `crypto/sha256`, `crypto/sha512`, `crypto/hmac_sha512`,
   `crypto/ripemd160`
 - Transaktionen, Script, Adressen: `primitives/transaction`, `script/script`, `script/standard`,

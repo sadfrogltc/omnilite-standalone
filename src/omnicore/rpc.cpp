@@ -398,7 +398,7 @@ static UniValue omni_getpayload(const JSONRPCRequest& request)
 }
 
 // determine whether to automatically commit transactions
-#ifdef ENABLE_WALLET
+// omnilite-standalone: available without ENABLE_WALLET; sending goes through the node's wallet
 static UniValue omni_setautocommit(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() != 1)
@@ -422,7 +422,6 @@ static UniValue omni_setautocommit(const JSONRPCRequest& request)
     autoCommit = request.params[0].get_bool();
     return autoCommit;
 }
-#endif
 
 // display the tally map & the offer/accept list(s)
 static UniValue mscrpc(const JSONRPCRequest& request)
@@ -2131,9 +2130,10 @@ static const CRPCCommand commands[] =
     { "omni layer (data retrieval)", "omni_getnonfungibletokens",      &omni_getnonfungibletokens,       {"address", "propertyid"} },
     { "omni layer (data retrieval)", "omni_getnonfungibletokendata",   &omni_getnonfungibletokendata,    {"propertyid", "tokenidstart", "tokenidend"} },
     { "omni layer (data retrieval)", "omni_getnonfungibletokenranges", &omni_getnonfungibletokenranges,  {"propertyid"} },
+    // omnilite-standalone: omni_setautocommit outside ENABLE_WALLET
+    { "omni layer (configuration)",  "omni_setautocommit",             &omni_setautocommit,              {"flag"}  },
 #ifdef ENABLE_WALLET
     { "omni layer (data retrieval)", "omni_listtransactions",          &omni_listtransactions,           {"address", "count", "skip", "startblock", "endblock"} },
-    { "omni layer (configuration)",  "omni_setautocommit",             &omni_setautocommit,              {"flag"}  },
     { "omni layer (data retrieval)", "omni_getwalletbalances",         &omni_getwalletbalances,          {"includewatchonly"} },
     { "omni layer (data retrieval)", "omni_getwalletaddressbalances",  &omni_getwalletaddressbalances,   {"includewatchonly"} },
 #endif

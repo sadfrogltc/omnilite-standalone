@@ -14,7 +14,8 @@ benutzt; die Umsetzung steht in `coreshim.cpp` und `policy.cpp`.
 | `util/system.h` | `gArgs` für die `-omni*`-Argumente, `GetDataDir`, `TryCreateDirectories`, `LogPrintf` |
 | `util/time.h`, `sync.h`, `fs.h` | Zeit, Locks (`std::recursive_mutex`), `std::filesystem` |
 | `txmempool.h` | die Txids im Mempool der Node, gefüllt von `MempoolWatcher` (`src/mempool.cpp`) |
-| `ui_interface.h`, `interfaces/wallet.h` | ohne Wirkung: keine GUI, keine eigene Wallet |
+| `wallet/wallet.h`, `wallet/coincontrol.h`, `interfaces/wallet.h` | eine Wallet der Node per RPC: Outputs, `isMine`, Gebühr, `createTransaction`, signieren und senden (Umsetzung in `src/nodewallet.cpp`) |
+| `ui_interface.h` | ohne Wirkung: keine GUI |
 | `rpc/server.h`, `rpc/server.cpp` | Cores Befehlstabelle, Anfrage-Parsing, `help`/`stop`/`uptime`/`getrpcinfo` (Code aus Cores `rpc/server.cpp` ohne Timer und Signale); jeder Befehl läuft unter `cs_main` |
 | `index/txindex.h` | `g_txindex`: der Index ist der des Nodes, also immer synchron |
 | `wallet/rpcwallet.h`, `random.h` | leer bzw. `GetRandBytes` für das Cookie |

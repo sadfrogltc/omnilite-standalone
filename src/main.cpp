@@ -15,6 +15,7 @@
 #include <shutdown.h>
 #include <store.h>
 #include <syncer.h>
+#include <wallet/wallet.h>
 
 #include <chrono>
 #include <csignal>
@@ -130,6 +131,7 @@ int Run(const Config& cfg)
         std::unique_ptr<APIServer> api;
         if (cfg.api) {
             RegisterOmniRPCCommands();
+            SetWalletNode(&node); // omni_send* sign and broadcast through the node's wallet
             SetRPCWarmupStatus("Loading the Omni state...");
             APIOptions apiOptions;
             apiOptions.bind = cfg.apiBind;

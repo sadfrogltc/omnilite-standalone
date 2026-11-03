@@ -67,6 +67,7 @@ add_library(litecoin_core STATIC
   ${VENDOR}/support/cleanse.cpp
   ${VENDOR}/uint256.cpp
   ${VENDOR}/util/strencodings.cpp
+  ${VENDOR}/util/moneystr.cpp
   ${VENDOR}/policy/feerate.cpp
   src/chainparams.cpp)
 # src/ comes first: its chainparams.h replaces Litecoin Core's.
@@ -86,6 +87,7 @@ add_library(omnilite STATIC
   src/indexer.cpp
   src/logging.cpp
   src/mempool.cpp
+  src/nodewallet.cpp
   src/coreshim/coreshim.cpp
   src/coreshim/policy.cpp
   src/coreshim/rpc/server.cpp
@@ -114,6 +116,7 @@ add_library(omnilite STATIC
   src/omnicore/rpcpayload.cpp
   src/omnicore/rpcrawtx.cpp
   src/omnicore/rpcrequirements.cpp
+  src/omnicore/rpctx.cpp
   src/omnicore/rpctxobject.cpp
   src/omnicore/rpcvalues.cpp
   src/omnicore/rules.cpp

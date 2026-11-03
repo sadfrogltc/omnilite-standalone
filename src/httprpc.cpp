@@ -30,6 +30,7 @@
 void RegisterOmniDataRetrievalRPCCommands(CRPCTable& tableRPC);
 void RegisterOmniPayloadCreationRPCCommands(CRPCTable& tableRPC);
 void RegisterOmniRawTransactionRPCCommands(CRPCTable& tableRPC);
+void RegisterOmniTransactionCreationRPCCommands(CRPCTable& tableRPC);
 
 const std::set<std::string> PASSTHROUGH_METHODS = {
     "getbestblockhash", "getblock", "getblockchaininfo", "getblockcount", "getblockhash",
@@ -46,6 +47,7 @@ void RegisterOmniRPCCommands()
     RegisterOmniDataRetrievalRPCCommands(tableRPC);
     RegisterOmniPayloadCreationRPCCommands(tableRPC);
     RegisterOmniRawTransactionRPCCommands(tableRPC);
+    RegisterOmniTransactionCreationRPCCommands(tableRPC); // through the node's wallet, src/nodewallet.cpp
 }
 
 namespace {

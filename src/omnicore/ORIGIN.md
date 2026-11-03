@@ -10,7 +10,7 @@ braucht (`cs_main`, `chainActive`, `gArgs`, Blockdateien, UI-Signale), liefern d
 
 `activation`, `consensushash`, `convert`, `createpayload`, `dbbase`, `dbspinfo`, `dbstolist`,
 `createtx`, `dbtransaction`, `dbtxlist`, `dex`, `errors.h`, `notifications`, `omnicore`, `parse_string`,
-`pending`, `rpc`, `rpcmbstring`, `rpcpayload`, `rpcrawtx`, `rpcrequirements`, `rpctxobject`, `rpcvalues`, `rules`, `script`, `sp`, `sto`, `tally`, `tx`, `uint256_extensions.h`, `utilsbitcoin`,
+`pending`, `rpc`, `rpctx`, `rpcmbstring`, `rpcpayload`, `rpcrawtx`, `rpcrequirements`, `rpctxobject`, `rpcvalues`, `rules`, `script`, `sp`, `sto`, `tally`, `tx`, `uint256_extensions.h`, `utilsbitcoin`,
 `utilsui`, `version`, `walletcache`, `walletfetchtxs`, `walletutils`.
 
 Das umfasst den kompletten Ablauf von OmniLite: `parseTransaction`, die Logik aller Transaktionstypen,
@@ -25,14 +25,17 @@ Rückkehr zu einem gesicherten State bei Reorgs (`RewindDBsAndState`, `msc_initi
 | `nftdb.h` | `<map>`, `<string>`, `<vector>` ergänzt; `std::filesystem` statt `boost::filesystem` |
 | `persistence.h/.cpp`, `sp.cpp` | `<fs.h>` (`std::filesystem`) statt `<boost/filesystem.hpp>` |
 | `encoding.cpp` | `GetRand(256)` → `std::random_device` (nur die Wahl des letzten Bytes der Class-B-Schlüssel, nicht konsensrelevant) |
+| `rpc.cpp` | `omni_setautocommit` auch ohne `ENABLE_WALLET` (für den Dry-Run beim Senden über die Node-Wallet) |
+| `walletutils.h`, `wallettxbuilder.h` | `SelectCoins`, `SelectAllCoins`, `CreateFundedTransaction` auch ohne `ENABLE_WALLET` deklariert |
+| `wallettxbuilder.cpp` | nicht übernommen: `WalletTxBuilder` und `CreateFundedTransaction` sind in `src/nodewallet.cpp` über die Wallet der Node neu geschrieben, mit dem Ablauf des Originals |
 | `log.h`, `log.cpp` | ersetzt: gleiche Flags, `PrintToLog`, `PrintToConsole` und `InitDebugLogLevels` (wörtlich), aber Ausgabe ins Programm-Log (Debug- bzw. Info-Ebene) statt `omnicore.log` |
 
 ## Build
 
 - Assertions bleiben in jedem Build-Typ an (`NDEBUG` wird entfernt): OmniLite bucht z. B. mit
   `assert(update_tally_map(...))`, ohne Assertions fehlen diese Buchungen.
-- Ohne `ENABLE_WALLET` gebaut: die Wallet-Teile des Originals sind aus. Senden läuft später über die
-  Wallet des `litecoind`.
+- Ohne `ENABLE_WALLET` gebaut: die Wallet-Teile des Originals sind aus. Gesendet wird über die Wallet des
+  `litecoind` (`src/nodewallet.cpp`).
 
 ## Tests
 

@@ -187,6 +187,27 @@ Nach jeder Phase: Build und Unit-Tests unter Linux grün, Commit, Push. Der Abgl
 - 7: Tx-Builder (Class C/B), Dry-Run, `omni_send` und Verwandte, `omni_createpayload_*`, `omni_createrawtx_*`.
 - 8: Token-Verwaltung (Issuance, Grant/Revoke, Crowdsale, Freeze, STO, NFT-Daten).
 - 9: DEx (Sell, Accept, Pay) mit Zahlungs-Wächter, der nie selbst zahlt.
+- **Stand Phase 7:** umgesetzt. Entscheidungen: eigener Tx-Builder über die Node-Wallet, Senden über
+  die API immer an (wie `omnilitecored`), Gebühr wie die Node-Wallet. OmniLites `rpctx.cpp` läuft
+  unverändert, damit sind alle `omni_send*`-Aufrufe da (auch Token-Verwaltung und DEx aus Phase 8/9,
+  dort noch ungetestet), dazu `omni_setautocommit` für den Dry-Run (gibt die signierte Tx zurück statt
+  sie zu senden). Was `rpctx.cpp` von Cores Wallet will, beantwortet `src/nodewallet.cpp` per RPC:
+  `CWallet` ist eine Wallet der Node (Name aus der URI `/wallet/<name>`, wie `litecoin-cli
+  -rpcwallet`), `SelectCoins` nimmt per `listunspent` nur vertrauenswürdige Outputs der
+  Absenderadresse (bis Gebühr für 20 kB plus Referenzbetrag, wie OmniLite), `createTransaction` baut die
+  Tx mit genau diesen Inputs, Wechselgeld zurück an den Absender vor dem letzten Output (der
+  Referenzadresse), Wechselgeld unter der Dust-Grenze geht in die Gebühr. Signiert wird mit
+  `signrawtransactionwithwallet`, gesendet mit `sendrawtransaction`; die Schlüssel verlassen die Node
+  nie. Gebühr: `paytxfee` der Wallet, sonst `estimatesmartfee` (6 Blöcke), sonst 0,0001 LTC/kB, nie
+  unter `relayfee`/`mempoolminfee` der Node; berechnet auf die signierte Größe. `WalletTxBuilder`
+  (Class C, sonst Class B mit dem öffentlichen Schlüssel aus `getaddressinfo`) und
+  `CreateFundedTransaction` (`omni_funded_send`) sind neu geschrieben, folgen aber dem Ablauf des
+  Originals. Fehler der Node (z. B. gesperrte Wallet) kommen mit ihrem Text beim Aufrufer an; OmniLites
+  Fehlercodes bleiben, mit Grund. Eine gesendete Tx ist sofort pending (Mempool, Marker-Cache,
+  `PendingAdd`). Getestet mit einer simulierten Node-Wallet: Aufbau, Gebühr, Verbuchung durch OmniLite,
+  Dry-Run, Wallet-Auswahl über die URI, gesperrte Wallet, fremde und zu kleine Outputs, Class B,
+  `omni_funded_send` mit Verbuchung, ohne Wallet. Noch offen: die lesenden Wallet-Aufrufe
+  (`omni_listtransactions`, `omni_getwalletbalances`, `omni_getwalletaddressbalances`, `ismine`).
 
 ### Später
 - Snapshot-Export und -Import, Status-Aufruf (Höhe, Abstand zur Node, Reorgs), systemd-Unit.

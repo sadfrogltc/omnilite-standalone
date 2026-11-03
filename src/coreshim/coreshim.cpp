@@ -217,6 +217,12 @@ void CTxMemPool::SetHashes(const std::set<uint256>& txids)
     m_txids = txids;
 }
 
+void CTxMemPool::Add(const uint256& txid)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_txids.insert(txid);
+}
+
 void CTxMemPool::RemoveForBlock(const std::vector<uint256>& txids)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -285,6 +291,16 @@ bool DecodeHexTx(CMutableTransaction& tx, const std::string& hex_tx, bool try_no
 }
 
 // From Core's core_write.cpp.
+UniValue ValueFromAmount(const CAmount& amount)
+{
+    bool sign = amount < 0;
+    int64_t n_abs = (sign ? -amount : amount);
+    int64_t quotient = n_abs / COIN;
+    int64_t remainder = n_abs % COIN;
+    return UniValue(UniValue::VNUM,
+            strprintf("%s%d.%08d", sign ? "-" : "", quotient, remainder));
+}
+
 std::string EncodeHexTx(const CTransaction& tx, const int serializeFlags)
 {
     CDataStream ssTx(SER_NETWORK, PROTOCOL_VERSION | serializeFlags);

@@ -9,9 +9,20 @@
 
 #include <chainparams.h>
 #include <hash.h>
+#include <core_io.h>
 #include <httprpc.h>
 #include <mempool.h>
+#include <omnicore/errors.h>
+#include <omnicore/script.h>
+#include <omnicore/utilsbitcoin.h>
 #include <txmempool.h>
+#include <version.h>
+#include <wallet/wallet.h>
+// After rpc/protocol.h (via wallet/wallet.h): libevent defines HTTP_OK and others as macros.
+#include <test/fakelitecoind.h>
+
+#include <algorithm>
+#include <mutex>
 #include <key_io.h>
 #include <omnicore/activation.h>
 #include <omnicore/createpayload.h>
@@ -334,6 +345,264 @@ BOOST_AUTO_TEST_CASE(api_answers_from_the_state)
     named.pushKV("propertyid", 3);
     named.pushKV("amount", "0.5");
     BOOST_CHECK_EQUAL(client.Call("omni_createpayload_simplesend", named).get_str(), "00000000000000030000000002faf080");
+}
+
+/**
+ * The wallet part of a litecoind: outputs of the wallet's addresses, a
+ * signature of fixed size for every input, broadcasting with bookkeeping.
+ */
+struct FakeWallet {
+    std::mutex mutex;
+    std::vector<NodeCoin> coins;
+    std::set<std::string> mine;
+    std::vector<CTransactionRef> sent;
+    std::vector<std::string> uris;
+    int signs = 0;
+    bool locked = false;
+
+    static UniValue Error(int code, const std::string& message)
+    {
+        UniValue e(UniValue::VOBJ);
+        e.pushKV("code", code);
+        e.pushKV("message", message);
+        return e;
+    }
+
+    bool Handle(const std::string& method, const UniValue& params, const std::string& uri, UniValue& result, UniValue& error)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        uris.push_back(uri);
+        if (method == "listunspent") {
+            result = UniValue(UniValue::VARR);
+            const std::string address = params[2][0].get_str();
+            for (const NodeCoin& c : coins) {
+                if (c.address != address) continue;
+                UniValue u(UniValue::VOBJ);
+                u.pushKV("txid", c.outpoint.hash.GetHex());
+                u.pushKV("vout", static_cast<int>(c.outpoint.n));
+                u.pushKV("address", c.address);
+                u.pushKV("scriptPubKey", HexStr(c.out.scriptPubKey.begin(), c.out.scriptPubKey.end()));
+                u.pushKV("amount", ValueFromAmount(c.out.nValue));
+                u.pushKV("confirmations", 6);
+                u.pushKV("spendable", true);
+                u.pushKV("safe", true);
+                result.push_back(u);
+            }
+        } else if (method == "getwalletinfo") {
+            result = UniValue(UniValue::VOBJ);
+            result.pushKV("paytxfee", ValueFromAmount(0));
+        } else if (method == "estimatesmartfee") {
+            result = UniValue(UniValue::VOBJ);
+            result.pushKV("feerate", ValueFromAmount(20000)); // 0.0002 LTC/kB
+        } else if (method == "getnetworkinfo") {
+            result = UniValue(UniValue::VOBJ);
+            result.pushKV("relayfee", ValueFromAmount(1000));
+        } else if (method == "getmempoolinfo") {
+            result = UniValue(UniValue::VOBJ);
+            result.pushKV("mempoolminfee", ValueFromAmount(1000));
+        } else if (method == "getaddressinfo") {
+            result = UniValue(UniValue::VOBJ);
+            result.pushKV("ismine", mine.count(params[0].get_str()) > 0);
+            result.pushKV("pubkey", "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798");
+        } else if (method == "signrawtransactionwithwallet") {
+            if (locked) {
+                error = Error(RPC_WALLET_UNLOCK_NEEDED, "Error: Please enter the wallet passphrase with walletpassphrase first.");
+                return true;
+            }
+            CMutableTransaction mtx;
+            BOOST_REQUIRE(DecodeHexTx(mtx, params[0].get_str()));
+            for (CTxIn& in : mtx.vin) in.scriptSig = CScript() << std::vector<unsigned char>(72, 0x30) << std::vector<unsigned char>(33, 0x02);
+            ++signs;
+            result = UniValue(UniValue::VOBJ);
+            result.pushKV("hex", EncodeHexTx(CTransaction(mtx)));
+            result.pushKV("complete", true);
+        } else if (method == "sendrawtransaction") {
+            CMutableTransaction mtx;
+            BOOST_REQUIRE(DecodeHexTx(mtx, params[0].get_str()));
+            CTransactionRef tx = MakeTransactionRef(mtx);
+            // Spent outputs leave the wallet, outputs to its addresses come in.
+            for (const CTxIn& in : tx->vin) {
+                coins.erase(std::remove_if(coins.begin(), coins.end(), [&](const NodeCoin& c) { return c.outpoint == in.prevout; }), coins.end());
+            }
+            for (unsigned int i = 0; i < tx->vout.size(); ++i) {
+                CTxDestination dest;
+                if (ExtractDestination(tx->vout[i].scriptPubKey, dest) && mine.count(EncodeDestination(dest))) {
+                    coins.push_back({COutPoint(tx->GetHash(), i), tx->vout[i], EncodeDestination(dest)});
+                }
+            }
+            sent.push_back(tx);
+            result = tx->GetHash().GetHex();
+        } else {
+            return false;
+        }
+        return true;
+    }
+};
+
+int64_t SignedSize(const CTransaction& tx)
+{
+    return ::GetSerializeSize(tx, PROTOCOL_VERSION); // no witness data here
+}
+
+BOOST_AUTO_TEST_CASE(send_through_the_node_wallet)
+{
+    std::vector<unsigned char> issue = CreatePayload_IssuanceFixed(1, MSC_PROPERTY_TYPE_DIVISIBLE, 0, "Games", "", "Coin", "", "", 1000 * COIN);
+    Connect("s1", start, {node.OmniTx(alice, issue)});
+
+    // alice's address holds 1 LTC in the node's wallet.
+    FakeWallet wallet;
+    const COutPoint funding = node.Fund(alice, 1 * COIN);
+    wallet.coins.push_back({funding, node.txs[funding.hash]->vout[0], AddressOf(alice)});
+    wallet.mine.insert(AddressOf(alice));
+    FakeLitecoind litecoind;
+    litecoind.handler = [&](const std::string& m, const UniValue& p, const std::string& u, UniValue& r, UniValue& e) { return wallet.Handle(m, p, u, r, e); };
+    RPCClient nodeRPC("127.0.0.1", litecoind.port, "user", "pass", 10);
+
+    RegisterOmniRPCCommands();
+    if (RPCIsInWarmup(nullptr)) SetRPCWarmupFinished();
+    SetWalletNode(&nodeRPC);
+    APIOptions options;
+    options.user = "u";
+    options.password = "p";
+    APIServer api(options, &nodeRPC);
+    api.Start();
+    RPCClient client("127.0.0.1", api.Port(), "u", "p", 10);
+    auto send = [&](const RPCClient& c, const std::string& to, const std::string& amount) {
+        UniValue params(UniValue::VARR);
+        params.push_back(AddressOf(alice));
+        params.push_back(to);
+        params.push_back(3);
+        params.push_back(amount);
+        return c.Call("omni_send", params);
+    };
+
+    // omni_send: alice's coin in, payload, change back to alice, bob as reference last.
+    const std::string txid = send(client, AddressOf(bob), "100").get_str();
+    BOOST_REQUIRE_EQUAL(wallet.sent.size(), 1u);
+    CTransactionRef tx = wallet.sent[0];
+    BOOST_CHECK_EQUAL(tx->GetHash().GetHex(), txid);
+    BOOST_REQUIRE_EQUAL(tx->vin.size(), 1u);
+    BOOST_CHECK(tx->vin[0].prevout == funding);
+    BOOST_REQUIRE_EQUAL(tx->vout.size(), 3u);
+    BOOST_CHECK(tx->vout[0].scriptPubKey[0] == OP_RETURN);
+    BOOST_CHECK(tx->vout[1].scriptPubKey == alice);
+    BOOST_CHECK(tx->vout[2].scriptPubKey == bob);
+    BOOST_CHECK_EQUAL(tx->vout[2].nValue, OmniGetDustThreshold(bob));
+    // The fee is the node's rate (estimatesmartfee, 0.0002 LTC/kB) for the signed size.
+    const CAmount fee = 1 * COIN - tx->GetValueOut();
+    BOOST_CHECK_EQUAL(fee, CFeeRate(20000).GetFee(SignedSize(*tx)));
+    // Pending at once, as after AcceptToMemoryPool.
+    BOOST_CHECK(IsInMarkerCache(tx->GetHash()));
+    BOOST_CHECK(mempool.exists(tx->GetHash()));
+
+    // OmniLite reads the transaction like any other: 100 tokens to bob.
+    Connect("s2", start + 1, {tx});
+    BOOST_CHECK_EQUAL(Balance(bob, 3), 100 * COIN);
+    BOOST_CHECK_EQUAL(Balance(alice, 3), 900 * COIN);
+
+    // Dry run: omni_setautocommit false returns the signed transaction, nothing is sent.
+    auto setAutoCommit = [&](bool on) {
+        UniValue value;
+        value.setBool(on);
+        UniValue flag(UniValue::VARR);
+        flag.push_back(value);
+        client.Call("omni_setautocommit", flag);
+    };
+    BOOST_TEST_CHECKPOINT("dry run");
+    setAutoCommit(false);
+    const std::string hex = send(client, AddressOf(carol), "1").get_str();
+    setAutoCommit(true);
+    CMutableTransaction dry;
+    BOOST_REQUIRE(DecodeHexTx(dry, hex));
+    BOOST_CHECK_EQUAL(wallet.sent.size(), 1u);
+    BOOST_CHECK(dry.vin[0].prevout == COutPoint(tx->GetHash(), 1)); // the change of the first send
+
+    // A wallet named in the URI (litecoin-cli -rpcwallet) is the one asked.
+    wallet.uris.clear();
+    send(client.ForWallet("w1"), AddressOf(carol), "1");
+    BOOST_CHECK(std::count(wallet.uris.begin(), wallet.uris.end(), "/wallet/w1") == static_cast<long>(wallet.uris.size()));
+    BOOST_CHECK_EQUAL(wallet.sent.size(), 2u);
+
+    // The node's errors reach the caller.
+    wallet.locked = true;
+    BOOST_CHECK_EXCEPTION(send(client, AddressOf(carol), "1"), RPCError,
+        [](const RPCError& e) { return e.code == RPC_WALLET_UNLOCK_NEEDED && e.message.find("passphrase") != std::string::npos; });
+    wallet.locked = false;
+
+    // Only alice's coins count, even if the wallet has more elsewhere.
+    wallet.mine.insert(AddressOf(carol));
+    wallet.coins = {{node.Fund(carol, 5 * COIN), CTxOut(5 * COIN, carol), AddressOf(carol)}};
+    BOOST_CHECK_EXCEPTION(send(client, AddressOf(bob), "1"), RPCError,
+        [](const RPCError& e) { return e.code == MP_ERR_INPUTSELECT_FAIL; });
+
+    // Too little for bob's dust output and the fee (together about 11 500 sat).
+    wallet.coins = {{node.Fund(alice, 8000), CTxOut(8000, alice), AddressOf(alice)}};
+    BOOST_CHECK_EXCEPTION(send(client, AddressOf(bob), "1"), RPCError,
+        [](const RPCError& e) { return e.code == MP_ERR_CREATE_TX && e.message.find("Insufficient funds") != std::string::npos; });
+
+    // A payload too large for OP_RETURN goes out as Class B: Exodus output and
+    // multisig outputs with the wallet's public key of alice.
+    wallet.coins = {{node.Fund(alice, 1 * COIN), CTxOut(1 * COIN, alice), AddressOf(alice)}};
+    {
+        UniValue params(UniValue::VARR);
+        params.push_back(AddressOf(alice));
+        params.push_back(1);
+        params.push_back(2);
+        params.push_back(0);
+        params.push_back("Games");
+        params.push_back("");
+        params.push_back("Big");
+        params.push_back("");
+        params.push_back(std::string(150, 'x'));
+        params.push_back("10");
+        client.Call("omni_sendissuancefixed", params);
+    }
+    CTransactionRef classB = wallet.sent.back();
+    int multisig = 0, exodus = 0;
+    for (const CTxOut& out : classB->vout) {
+        txnouttype type;
+        std::vector<std::vector<unsigned char>> solutions;
+        type = Solver(out.scriptPubKey, solutions);
+        if (type == TX_MULTISIG) ++multisig;
+        if (out.scriptPubKey == GetScriptForDestination(ExodusAddress())) ++exodus;
+    }
+    BOOST_CHECK_GE(multisig, 1);
+    BOOST_CHECK_EQUAL(exodus, 1);
+
+    // omni_funded_send: the tokens' owner sends, a second address pays the fee
+    // and gets the change. Sender's inputs first, change output first.
+    const COutPoint aliceDust = node.Fund(alice, 10000);
+    const COutPoint carolFunds = node.Fund(carol, 1 * COIN);
+    wallet.mine.insert(AddressOf(carol));
+    wallet.coins = {{aliceDust, CTxOut(10000, alice), AddressOf(alice)}, {carolFunds, CTxOut(1 * COIN, carol), AddressOf(carol)}};
+    {
+        UniValue params(UniValue::VARR);
+        params.push_back(AddressOf(alice));
+        params.push_back(AddressOf(bob));
+        params.push_back(3);
+        params.push_back("5");
+        params.push_back(AddressOf(carol));
+        client.Call("omni_funded_send", params);
+    }
+    CTransactionRef funded = wallet.sent.back();
+    BOOST_REQUIRE_EQUAL(funded->vin.size(), 2u);
+    BOOST_CHECK(funded->vin[0].prevout == aliceDust);
+    BOOST_CHECK(funded->vin[1].prevout == carolFunds);
+    BOOST_REQUIRE_EQUAL(funded->vout.size(), 3u);
+    BOOST_CHECK(funded->vout[0].scriptPubKey == carol);
+    BOOST_CHECK(funded->vout[1].scriptPubKey[0] == OP_RETURN);
+    BOOST_CHECK(funded->vout[2].scriptPubKey == bob);
+    Connect("s3", start + 2, {funded});
+    BOOST_CHECK_EQUAL(Balance(bob, 3), 105 * COIN);
+    BOOST_CHECK_EQUAL(Balance(carol, 3), 0);
+
+    // Without a node wallet: as Omni Core without one.
+    SetWalletNode(nullptr);
+    BOOST_CHECK_EXCEPTION(send(client, AddressOf(bob), "1"), RPCError,
+        [](const RPCError& e) { return e.code == MP_ERR_WALLET_ACCESS; });
+
+    node.mempoolTxs.clear();
+    MempoolWatcher(node).Refresh();
 }
 
 BOOST_AUTO_TEST_CASE(pending_transactions_from_the_mempool)

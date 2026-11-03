@@ -19,6 +19,8 @@ public:
 
     /** Not in Core: replaces the copy with the node's current txids. */
     void SetHashes(const std::set<uint256>& txids);
+    /** Not in Core: a transaction this program just broadcast. */
+    void Add(const uint256& txid);
     /** Not in Core: drops the transactions of a connected block, as Core's removeForBlock. */
     void RemoveForBlock(const std::vector<uint256>& txids);
 
