@@ -5,12 +5,15 @@
 # main, test or regtest
 network=main
 
-# litecoind RPC. Needs -txindex=1 and an unpruned chain.
+# RPC of the node (litecoind or omnilited). Needs -txindex=1 and an unpruned chain.
+# Everything comes over RPC: the node's data directory does not matter, wherever it is.
 rpcconnect=127.0.0.1
 #rpcport=9332
+# As rpcuser/rpcpassword in the node's own config file.
 #rpcuser=
 #rpcpassword=
-# Used when rpcpassword is empty. Default: ~/.litecoin/.cookie (testnet4/, regtest/ for the other networks).
+# Used when rpcpassword is empty; the only file of the node that is ever read.
+# Default: ~/.litecoin/.cookie (testnet4/, regtest/ for the other networks).
 #rpccookiefile=
 
 # Seconds between checks for new blocks once synced, and for new mempool transactions.

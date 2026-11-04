@@ -20,12 +20,24 @@ if(OMNILITE_SANITIZE)
   add_link_options(-fsanitize=address,undefined)
 endif()
 
+# A release binary: runs on any x86-64 Linux, whatever its glibc and libraries.
+option(OMNILITE_STATIC "Link everything statically" OFF)
+if(OMNILITE_STATIC)
+  set(CMAKE_FIND_LIBRARY_SUFFIXES .a)
+  add_link_options(-static)
+endif()
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(EVENT REQUIRED IMPORTED_TARGET libevent)
 pkg_check_modules(EVENT_PTHREADS REQUIRED IMPORTED_TARGET libevent_pthreads)
 find_package(Boost 1.64 REQUIRED CONFIG COMPONENTS unit_test_framework)
 find_path(LEVELDB_INCLUDE_DIR leveldb/db.h REQUIRED)
 find_library(LEVELDB_LIBRARY leveldb REQUIRED)
+if(OMNILITE_STATIC)
+  # A static leveldb does not bring its dependency along.
+  find_library(SNAPPY_LIBRARY snappy REQUIRED)
+  list(APPEND LEVELDB_LIBRARY ${SNAPPY_LIBRARY})
+endif()
 
 set(VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/core)
 

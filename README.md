@@ -7,9 +7,31 @@ können, über die Wallet ihres `litecoind`. Details und Phasen: [Plan.md](Plan.
 **Stand:** Phase 0 bis 9. Der Indexer folgt der Chain ab dem Omni-Genesis-Block und lässt jeden Block
 durch OmniLite 0.18.1 selbst laufen: alle Transaktionstypen, Guthaben, Properties, DEx, Crowdsales,
 NFTs, die Sicherung des States und Reorgs. Die API beantwortet die `omni_*`-Aufrufe wie `omnilitecored`, unbestätigte Omni-Transaktionen aus dem Mempool der Node eingeschlossen. `omni_send` und die übrigen Sende-Aufrufe bauen die Transaktion aus Outputs der Absenderadresse und lassen die Wallet des `litecoind` signieren und senden; `omni_setautocommit false` gibt sie stattdessen nur zurück. `omni_listtransactions` und `omni_getwallet(address)balances` zeigen die Omni-Transaktionen und Guthaben der Node-Wallet, `ismine` in den Transaktionen bezieht sich auf sie. Jede Omni-Transaktion geht vor dem Senden probehalber durch OmniLites Logik; was OmniLite ablehnen würde, wird nicht gesendet. Eine DEx-Zahlung (`omni_senddexpay`) gibt es nur auf ausdrücklichen Aufruf; ein Wächter lehnt sie ab, wenn sie zu spät käme oder OmniLite sie nicht als Kauf verbuchen würde (auf Testnet und Regtest immer). Wer das API-Login hat, kann damit Guthaben der Node-Wallet ausgeben.
-Noch nicht gegen einen echten `litecoind` getestet.
+Auf Regtest gegen `omnilited` abgeglichen (siehe unten), auf Mainnet und gegen einen aktuellen `litecoind`
+noch nicht getestet.
 
-## Voraussetzungen (Linux)
+## Fertiges Binary
+
+Das Release enthält ein statisches Binary für x86-64-Linux, es braucht keine Bibliotheken:
+
+```bash
+tar -xzf omnilite-standalone-0.1.0-x86_64-linux.tar.gz
+cd omnilite-standalone-0.1.0
+mkdir -p ~/.omnilite-standalone
+cp omnilite-standalone.conf.example ~/.omnilite-standalone/omnilite-standalone.conf
+```
+
+In der Konfiguration die RPC-Zugangsdaten der Node eintragen, dann `./omnilite-standalone -check`.
+
+Alles kommt per RPC. Wo die Node ihre Daten ablegt, spielt deshalb keine Rolle; es reicht, dass sie unter
+`rpcconnect`/`rpcport` erreichbar ist, `-txindex=1` hat und nicht gepruned ist. Das Einzige, was je aus dem
+Datenordner der Node gelesen wird, ist ihr Cookie, und auch nur ohne `rpcpassword`. Liegt es woanders:
+`rpccookiefile=<pfad>`.
+
+Hostnamen in `rpcconnect` löst das statische Binary je nach System nicht auf; am besten eine IP-Adresse
+eintragen (Vorgabe: `127.0.0.1`).
+
+## Voraussetzungen zum Selbstbauen (Linux)
 
 ```bash
 sudo apt install build-essential cmake pkg-config libevent-dev libleveldb-dev libboost-dev libboost-test-dev
@@ -26,6 +48,8 @@ cmake --build build -j
 ```
 
 Mit `-DOMNILITE_SANITIZE=ON` laufen Build und Tests mit AddressSanitizer und UndefinedBehaviorSanitizer.
+`-DOMNILITE_STATIC=ON` linkt alles statisch (Ziel `omnilite-standalone`, braucht `libsnappy-dev`), so entsteht
+das Release-Binary.
 
 Abgleich mit OmniLite selbst: das Skript startet `omnilited` (offizielles Release) auf Regtest, lässt
 dieses Programm von ihm indexieren, sendet Omni-Transaktionen aller Art über beide und vergleicht nach
